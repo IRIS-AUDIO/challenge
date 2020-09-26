@@ -42,69 +42,6 @@ class TransformsTest(tf.test.TestCase):
         self.assertAllEqual(target, 
                             random_shift(org, axis=0, width=2))
 
-    def test_cutmix(self):
-        xs = np.array([[[[0], [0], [0]],
-                        [[0], [0], [0]],
-                        [[0], [0], [0]]],
-                       [[[1], [1], [1]],
-                        [[1], [1], [1]],
-                        [[1], [1], [1]]],
-                       [[[2], [2], [2]],
-                        [[2], [2], [2]],
-                        [[2], [2], [2]]]])
-        ys = np.array([[1, 0, 0],
-                       [0, 1, 0],
-                       [0, 0, 1]])
-        t_xs = np.array([[[[0], [1], [0]],
-                          [[0], [0], [0]],
-                          [[0], [0], [0]]],
-                         [[[1], [2], [1]],
-                          [[1], [1], [1]],
-                          [[1], [1], [1]]],
-                         [[[2], [0], [2]],
-                          [[2], [2], [2]],
-                          [[2], [2], [2]]]])
-        t_ys = np.array([[8/9, 1/9, 0],
-                         [0, 8/9, 1/9],
-                         [1/9, 0, 8/9]])
-
-        tf.random.set_seed(111)
-        cutmix_xs, cutmix_ys = cutmix(xs, ys)
-        self.assertAllClose(t_xs, cutmix_xs)
-        self.assertAllClose(t_ys, cutmix_ys)
-
-    def test_interclass(self):
-        # TODO
-        self.assertEqual(True, False)
-        '''
-        shape = (32, 16, 16, 3) # batch, height, width, chan
-        n_classes = 4
-        xs = np.random.randn(*shape)
-        ys = np.random.randint(n_classes, size=shape[0])
-        ys = np.eye(n_classes)[ys]
-
-        inter_xs, inter_ys = interclass_cutmix(xs, ys)
-        self.assertNotAllClose(xs, inter_xs)
-        self.assertAllEqual(tf.reduce_max(inter_ys, axis=-1),
-                            tf.ones(shape[0]))
-        '''
-
-    def test_interbinary(self):
-        # TODO
-        self.assertEqual(True, False)
-        '''
-        N_CLASSES = 5
-        N_SAMPLES = 128
-        tf.random.set_seed(0)
-        specs = np.random.randn(N_SAMPLES, 16, 16)
-        labels = np.random.randint(N_CLASSES, size=N_SAMPLES)
-        labels = np.eye(N_CLASSES)[labels]
-
-        s, l = bin_mixup(alpha=1.)(specs, labels)
-        self.assertEqual(2, len(np.unique(l[..., -1]))) # only 0, 1
-        self.assertEqual(4, len(np.unique(l[..., :-1]))) # + 2
-        '''
-
     def test_random_magphase_flip(self):
         tf.random.set_seed(0)
         # INPUTS
@@ -197,45 +134,6 @@ class TransformsTest(tf.test.TestCase):
             [[1, 0], [0, 1], [-1, 0], [0, -1]], dtype='float32')
 
         self.assertAllClose(complex_tensor, magphase_to_complex(magphase))
-
-    def test_merge_complex_specs(self):
-        n_frame = 5
-        n_voice_classes = 5
-
-        background = np.array([[[1, 0], [-1, 0], [1, 0]],
-                               [[-1, 0], [1, 0], [-1, 0]]],
-                              dtype='float32')
-        voice = np.array([[[0, 1], [0, -1]],
-                          [[0, -1], [0, 1]]],
-                         dtype='float32')
-
-        tf.random.set_seed(0)
-        s_target = np.array([[[ 1,  0.        ],
-                              [-1,  0.        ],
-                              [ 1,  0.40697938],
-                              [ 1, -0.40697938],
-                              [-1,  0.        ]],
-                             [[-1,  0.        ],
-                              [ 1,  0.        ],
-                              [-1, -0.40697938],
-                              [-1,  0.40697938],
-                              [ 1,  0.        ]]])
-        label = 3
-        spec, l = merge_complex_specs(background, 
-                                      (voice, label), 
-                                      n_frame=n_frame, 
-                                      n_voice_classes=n_voice_classes)
-        self.assertAllClose(s_target, spec)
-        self.assertAllClose([0, 0, 0, 1, 0, 0], l)
-
-        # NON-VOICE AUDIO
-        spec, l = merge_complex_specs(background, 
-                                      (voice, label), 
-                                      n_frame=3, 
-                                      prob=0.,
-                                      n_voice_classes=n_voice_classes)
-        self.assertAllClose(background, spec)
-        self.assertAllClose([0, 0, 0, 0, 0, 1], l)
 
     def test_phase_vocoder(self):
         n_freq, time, chan2 = 257, 100, 6

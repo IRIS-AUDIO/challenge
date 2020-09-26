@@ -69,6 +69,20 @@ def windows_to_seq(windows,
 
 
 '''
+DATASET
+'''
+def list_to_generator(dataset: list):
+    def _gen():
+        if isinstance(dataset, tuple):
+            for z in zip(*dataset):
+                yield z
+        else:
+            for data in dataset:
+                yield data
+    return _gen
+
+
+'''
 MODEL
 '''
 def apply_kernel_regularizer(model, kernel_regularizer):

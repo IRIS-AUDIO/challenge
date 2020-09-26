@@ -32,6 +32,22 @@ class UtilsTest(unittest.TestCase):
         self.assertTrue(
             np.allclose(target, windows_to_seq(windows[::2], window, skip=2)))
 
+    def test_list_to_generator(self):
+        n_samples = 4
+        x = np.random.randn(n_samples, 30)
+        y = np.random.randn(n_samples)
+
+        x_gen = list_to_generator(x)
+        self.assertTrue(callable(x_gen))
+        for i, x_ in enumerate(x_gen()):
+            self.assertEqual(x[i].tolist(), x_.tolist())
+
+        xy_gen = list_to_generator((x, y))
+        self.assertTrue(callable(xy_gen))
+        for i, (x_, y_) in enumerate(xy_gen()):
+            self.assertEqual(x[i].tolist(), x_.tolist())
+            self.assertEqual(y[i], y_)
+
     def test_apply_kernel_regularizer(self):
         n_samples, in_shape, out_shape = 128, 4, 4
         x = np.random.randn(n_samples, in_shape)

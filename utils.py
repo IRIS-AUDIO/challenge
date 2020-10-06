@@ -95,3 +95,15 @@ def apply_kernel_regularizer(model, kernel_regularizer):
     model = tf.keras.models.clone_model(model)
     return model
 
+
+def custom_scheduler(d_model, warmup_steps=4000):
+    # https://www.tensorflow.org/tutorials/text/transformer#optimizer
+    d_model = tf.cast(d_model, tf.float32)
+
+    def _scheduler(step):
+        step = tf.cast(step+1, tf.float32)
+        arg1 = tf.math.rsqrt(step)
+        arg2 = step * (warmup_steps ** -1.5)
+        return tf.math.rsqrt(d_model) * tf.math.minimum(arg1, arg2)
+    return _scheduler
+

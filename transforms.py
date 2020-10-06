@@ -131,7 +131,7 @@ def minmax_norm_magphase(specs, labels=None):
 
 
 """ COMPLEX-SPECTROGRAMS """
-def complex_to_magphase(complex_tensor):
+def complex_to_magphase(complex_tensor, y=None):
     n_chan = complex_tensor.shape[-1] // 2
     real = complex_tensor[..., :n_chan]
     img = complex_tensor[..., n_chan:]
@@ -139,7 +139,11 @@ def complex_to_magphase(complex_tensor):
     mag = tf.math.sqrt(real**2 + img**2)
     phase = tf.math.atan2(img, real)
 
-    return tf.concat([mag, phase], axis=-1)
+    magphase = tf.concat([mag, phase], axis=-1)
+
+    if y is None:
+        return magphase
+    return magphase, y
 
 
 def magphase_to_complex(magphase):

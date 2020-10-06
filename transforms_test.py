@@ -42,31 +42,6 @@ class TransformsTest(tf.test.TestCase):
         self.assertAllEqual(target, 
                             random_shift(org, axis=0, width=2))
 
-    def test_random_magphase_flip(self):
-        tf.random.set_seed(0)
-        # INPUTS
-        spec = np.array([[[ 1,  2, -1, -2],
-                          [ 3,  4, -3, -4],
-                          [ 5,  6,  0,  4]],
-                         [[ 1,  2,  3,  4],
-                          [ 3,  6,  9, 12],
-                          [10, 11, 12, 13]]])
-        label = np.array([[0, 0, 1],
-                          [1, 0, 0]])
-        # TARGETS
-        t_spec = np.array([[[ 2,  1, -2, -1],
-                            [ 4,  3, -4, -3],
-                            [ 6,  5,  4,  0]],
-                           [[ 2,  1,  4,  3],
-                            [ 6,  3, 12,  9],
-                            [11, 10, 13, 12]]])
-        t_label = np.array([[0, 0, 1],
-                            [0, 1, 0]])
-        
-        s, l = random_magphase_flip(spec, label)
-        self.assertAllEqual(t_spec, s)
-        self.assertAllEqual(t_label, l)
-
     def test_magphase_mixup(self):
         tf.random.set_seed(0)
         specs = np.array([[[  1., 10.,  0.,  0.],
@@ -93,6 +68,12 @@ class TransformsTest(tf.test.TestCase):
         s, l = magphase_mixup(alpha=2., feat='complex')(specs, labels)
         self.assertAllClose(t_specs, s)
         self.assertAllClose(t_labels, l)
+
+    def test_magphase_to_mel(self):
+        num_mel_bins = 80
+        magphase = np.random.randn(32, 257, 100, 4).astype('float32')
+        mel = magphase_to_mel(num_mel_bins)(magphase)
+        self.assertEqual(mel.shape, [32, 80, 100, 2])
 
     def test_log_magphase(self):
         specs = np.array([[  1,  10, 100,   0,   1,  -1],

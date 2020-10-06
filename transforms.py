@@ -41,22 +41,6 @@ def random_shift(specs, axis=0, width=16):
 
 
 """ MAGNITUDE-PHASE SPECTROGRAM """
-def random_magphase_flip(spec, label):
-    flip = tf.cast(tf.random.uniform([]) > 0.5, spec.dtype)
-    n_chan = spec.shape[-1] // 2
-    chans = tf.reshape(tf.range(n_chan*2), (2, n_chan))
-    chans = tf.reshape(tf.reverse(chans, axis=[-1]), (-1,))
-    spec = flip*spec + (1-flip)*tf.gather(spec, chans, axis=-1)
-
-    flip = tf.cast(flip, label.dtype)
-    label = flip*label \
-            + (1-flip)*tf.concat(
-                [tf.reverse(label[..., :-1], axis=(-1,)), label[..., -1:]],
-                axis=-1)
-
-    return spec, label
-
-
 def magphase_mixup(alpha=2., feat='magphase'):
     '''
     returns magphase
@@ -97,6 +81,28 @@ def magphase_mixup(alpha=2., feat='magphase'):
         return specs, labels
 
     return _mixup
+
+
+def magphase_to_mel(num_mel_bins=80, 
+                    num_spectrogram_bins=257, 
+                    sample_rate=16000):
+    mel_matrix = tf.signal.linear_to_mel_weight_matrix(
+        num_mel_bins, num_spectrogram_bins, sample_rate)
+
+    def _magphase_to_mel(x, y=None):
+        '''
+        x: [batch_size, freq, time, chan2]
+
+        output: [batch_size, mel_freq, time, chan]
+        '''
+        x = x[..., :tf.shape(x)[-1] // 2] # remove phase
+        x = tf.tensordot(x, mel_matrix, axes=[1, 0]) # [b, time, chan, mel]
+        x = tf.transpose(x, perm=[0, 3, 1, 2])
+
+        if y is None:
+            return x
+        return x, y
+    return _magphase_to_mel 
 
 
 def log_magphase(specs, labels=None):

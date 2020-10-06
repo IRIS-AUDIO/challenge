@@ -46,6 +46,7 @@ args.add_argument('--l2', type=float, default=1e-6)
 
 # AUGMENTATION
 args.add_argument('--alpha', type=float, default=0.75)
+args.add_argument('--snr', type=float, default=-10)
 args.add_argument('--max_voices', type=int, default=4)
 args.add_argument('--max_noises', type=int, default=2)
 
@@ -141,7 +142,8 @@ if __name__ == "__main__":
                                  n_frame=config.n_frame,
                                  max_voices=config.max_voices,
                                  max_noises=config.max_noises,
-                                 n_classes=N_CLASSES)
+                                 n_classes=N_CLASSES,
+                                 snr=config.snr)
         pipeline = pipeline.map(to_frame_labels, num_parallel_calls=AUTOTUNE)
         pipeline = pipeline.map(augment, num_parallel_calls=AUTOTUNE)
         pipeline = pipeline.batch(BATCH_SIZE, drop_remainder=False)

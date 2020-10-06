@@ -8,7 +8,7 @@ class PipelineTest(tf.test.TestCase):
     def setUp(self):
         self.freq = 257
         self.chan = 4
-        self.n_classes = 10
+        self.n_classes = 30
 
     def test_merge_complex_specs(self):
         n_frame = 10
@@ -39,7 +39,27 @@ class PipelineTest(tf.test.TestCase):
                                       n_frame=n_frame, 
                                       n_classes=self.n_classes)
         self.assertEqual(spec.shape, [self.freq, n_frame, self.chan]) 
-        self.assertEqual(l.shape, [n_frame, self.n_classes]) 
+        self.assertEqual(l.shape, [n_voices, n_frame, self.n_classes]) 
+
+    def test_to_frame_labels(self):
+        n_voices = 10
+        n_frame = 30
+
+        x = None
+        y = np.random.randn(n_voices, n_frame, self.n_classes).astype('float32')
+
+        _, y_ = to_frame_labels(x, y)
+        self.assertEqual(y_.shape, [n_frame, self.n_classes])
+
+    def test_to_class_labels(self):
+        n_voices = 10
+        n_frame = 30
+
+        x = None
+        y = np.random.randn(n_voices, n_frame, self.n_classes).astype('float32')
+
+        _, y_ = to_class_labels(x, y)
+        self.assertEqual(y_.shape, [3, 10])
 
     def test_make_pipeline(self):
         n_frame = 30
@@ -65,13 +85,13 @@ class PipelineTest(tf.test.TestCase):
                                  labels, 
                                  noises,
                                  n_frame=n_frame, 
-                                 max_voicess=4,
+                                 max_voices=4,
                                  max_noises=4,
                                  n_classes=self.n_classes)
 
         for s, l in pipeline.take(3):
             self.assertEqual(s.shape, [self.freq, n_frame, self.chan])
-            self.assertEqual(l.shape, [n_frame, self.n_classes])
+            self.assertEqual(l.shape, [4, n_frame, self.n_classes])
 
 
 if __name__ == '__main__':

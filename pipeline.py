@@ -9,10 +9,14 @@ def merge_complex_specs(background,
                         n_frame=300, 
                         n_classes=30,
                         t_axis=1, # time-axis
-                        prob=0.9,
-                        noise_prob=0.3,
                         min_ratio=2/3,
-                        min_noise_ratio=1/2):
+                        min_noise_ratio=1/2,
+                        snr=-20):
+    '''
+    OUTPUT:
+        complex_spec: (freq, time, chan2)
+        labels: (n_voices, time, n_classes)
+    '''
     voices, labels = voices_and_labels
     output_shape = tuple(
         [s if i != t_axis else n_frame
@@ -27,72 +31,97 @@ def merge_complex_specs(background,
         [1 if i != t_axis else (n_frame+bg_frame-1) // bg_frame 
          for i in range(n_dims)])
     complex_spec = tf.image.random_crop(background, output_shape)
-    label = tf.zeros((n_frame, n_classes), dtype='float32')
 
     # voices
-    for v in range(tf.shape(voices)[0]):
+    max_voices = tf.shape(voices)[0]
+    n_voices = tf.random.uniform([], minval=1, maxval=max_voices, dtype='int32')
+    label = tf.zeros(shape=[max_voices, n_frame, n_classes], dtype='float32')
+    for v in range(n_voices):
         voice = voices[v]
         l = labels[v:v+1] # shape=[1, n_classes]
 
-        if tf.random.uniform([]) < prob:
-            # SNR 0 ~ -20
-            v_ratio = tf.math.pow(10., -tf.random.uniform([], maxval=2))
-            v_frame = tf.shape(voice)[t_axis]
+        # SNR 0 ~ -20
+        v_ratio = tf.math.pow(10., -tf.random.uniform([], maxval=-snr/10))
+        v_frame = tf.shape(voice)[t_axis]
 
-            l = tf.tile(l, [v_frame, 1])
-            mask = tf.cast(tf.reduce_max(voice, axis=axis) > 0, tf.float32)
-            l *= tf.expand_dims(mask, axis=-1)
+        l = tf.tile(l, [v_frame, 1])
+        mask = tf.cast(tf.reduce_max(voice, axis=axis) > 0, tf.float32)
+        l *= tf.expand_dims(mask, axis=-1)
 
-            v_frame = tf.cast(v_frame, tf.float32)
-            pad_size = n_frame - tf.cast(min_ratio*v_frame, tf.int32)
+        v_frame = tf.cast(v_frame, tf.float32)
+        pad_size = n_frame - tf.cast(min_ratio*v_frame, tf.int32)
 
-            if pad_size > 0:
-                voice = tf.pad(
-                    voice,
-                    [[0, 0] if i != t_axis else [pad_size] * 2
-                     for i in range(n_dims)])
-                l = tf.pad(l, [[pad_size]*2, [0, 0]])
+        if pad_size > 0:
+            voice = tf.pad(
+                voice,
+                [[0, 0] if i != t_axis else [pad_size] * 2
+                 for i in range(n_dims)])
+            l = tf.pad(l, [[pad_size]*2, [0, 0]])
 
-            maxval = tf.shape(voice)[t_axis] - n_frame
-            offset = tf.random.uniform([], maxval=maxval, dtype=tf.int32)
-            voice = tf.slice(
-                voice, 
-                [0 if i != t_axis else offset for i in range(n_dims)],
-                output_shape)
-            l = tf.slice(l, [offset, 0], [n_frame, n_classes])
+        maxval = tf.shape(voice)[t_axis] - n_frame
+        offset = tf.random.uniform([], maxval=maxval, dtype=tf.int32)
+        voice = tf.slice(
+            voice, 
+            [0 if i != t_axis else offset for i in range(n_dims)],
+            output_shape)
+        l = tf.slice(l, [offset, 0], [n_frame, n_classes])
+        l = tf.reshape(tf.one_hot(v, max_voices, dtype='float32'), (-1, 1, 1)) \
+            * tf.expand_dims(l, axis=0)
 
-            complex_spec += v_ratio * voice
-            label += l
+        complex_spec += v_ratio * voice
+        label += l
     
     # noise
     if noises is not None:
-        for n in range(tf.shape(noises)[0]):
+        n_noises = tf.random.uniform([], maxval=tf.shape(noises)[0], dtype='int32')
+        for n in range(n_noises):
             noise = noises[n]
-            if tf.random.uniform([]) < noise_prob:
-                # SNR 0 ~ -20
-                n_ratio = tf.math.pow(10., -tf.random.uniform([], maxval=2)) 
-                ns_frame = tf.cast(tf.shape(noise)[t_axis], tf.float32)
-                pad_size = n_frame - tf.cast(min_noise_ratio*ns_frame, tf.int32)
 
-                if pad_size > 0:
-                    noise = tf.pad(
-                        noise,
-                        [[0, 0] if i != t_axis else [pad_size]*2
-                         for i in range(n_dims)])
-                noise = tf.image.random_crop(noise, output_shape)
-                complex_spec += n_ratio * noise
+            # SNR 0 ~ -20
+            n_ratio = tf.math.pow(10., -tf.random.uniform([], maxval=2)) 
+            ns_frame = tf.cast(tf.shape(noise)[t_axis], tf.float32)
+            pad_size = n_frame - tf.cast(min_noise_ratio*ns_frame, tf.int32)
 
-    label = tf.clip_by_value(label, 0, 1)
+            if pad_size > 0:
+                noise = tf.pad(
+                    noise,
+                    [[0, 0] if i != t_axis else [pad_size]*2
+                     for i in range(n_dims)])
+            noise = tf.image.random_crop(noise, output_shape)
+            complex_spec += n_ratio * noise
+
     return complex_spec, label
+
+
+def to_frame_labels(x, y):
+    """
+
+    :param x:
+    :param y: [n_voices, n_frames, n_classes]
+    :return: [n_frames, n_classes]
+    """
+    y = tf.reduce_sum(y, axis=0)
+    y = tf.clip_by_value(y, 0, 1)
+    return x, y
+
+
+def to_class_labels(x, y):
+    '''
+    INPUT - y : [n_voices, n_frames, 30]
+    OUTPUT - y: [3, 10]
+    '''
+    y = tf.reduce_max(y, axis=1)
+    y = tf.reduce_sum(y, axis=0)
+    y = tf.reshape(y, [3, 10])
+    return x, y
 
 
 def make_pipeline(backgrounds, # a list of backgrounds noises
                   voices, # a list of human voicess
                   labels, # a list of labelss of human voicess
                   noises=None, # a list of additional noises
-                  batch_size=64,
                   n_frame=300, # number of frames per sample
-                  max_voicess=10,
+                  max_voices=10,
                   max_noises=10,
                   n_classes=30,
                   **kwargs):
@@ -129,7 +158,7 @@ def make_pipeline(backgrounds, # a list of backgrounds noises
         (tf.float32, tf.float32),
         (tf.TensorShape([freq, None, chan]), tf.TensorShape([n_classes])))
     v_dataset = v_dataset.repeat().shuffle(len(voices))
-    v_dataset = v_dataset.padded_batch(max_voicess)
+    v_dataset = v_dataset.padded_batch(max_voices)
 
     # NOISES
     if noises is not None:

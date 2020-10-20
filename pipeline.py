@@ -40,7 +40,6 @@ def merge_complex_specs(background,
         voice = voices[v]
         l = labels[v:v+1] # shape=[1, n_classes]
 
-        # SNR 0 ~ -20
         v_ratio = tf.math.pow(10., -tf.random.uniform([], maxval=-snr/10))
         v_frame = tf.shape(voice)[t_axis]
 
@@ -158,7 +157,8 @@ def make_pipeline(backgrounds, # a list of backgrounds noises
         (tf.float32, tf.float32),
         (tf.TensorShape([freq, None, chan]), tf.TensorShape([n_classes])))
     v_dataset = v_dataset.repeat().shuffle(len(voices))
-    v_dataset = v_dataset.padded_batch(max_voices)
+    v_dataset = v_dataset.padded_batch(
+        max_voices, padded_shapes=([freq, None, chan], [n_classes]))
 
     # NOISES
     if noises is not None:
@@ -167,7 +167,8 @@ def make_pipeline(backgrounds, # a list of backgrounds noises
             tf.float32,
             tf.TensorShape([freq, None, chan]))
         n_dataset = n_dataset.repeat().shuffle(len(noises))
-        n_dataset = n_dataset.padded_batch(max_noises)
+        n_dataset = n_dataset.padded_batch(
+            max_noises, padded_shapes=[freq, None, chan])
         dataset = tf.data.Dataset.zip((b_dataset, v_dataset, n_dataset))
     else:
         dataset = tf.data.Dataset.zip((b_dataset, v_dataset))

@@ -1,5 +1,6 @@
-import os
 import numpy as np
+import os
+import pickle
 import tensorflow as tf
 
 EPSILON = 1e-8

@@ -1,5 +1,6 @@
-import os
 import numpy as np
+import os
+import pickle
 import tensorflow as tf
 
 EPSILON = 1e-8
@@ -33,6 +34,7 @@ def seq_to_windows(seq,
         seq = np.pad(
             seq,
             [[win_size//2, (win_size-1)//2]] + [[0, 0]]*len(seq.shape[1:]),
+            mode='constant',
             **kwargs)
 
     return np.take(seq, windows, axis=0)
@@ -82,6 +84,15 @@ def list_to_generator(dataset: list):
     return _gen
 
 
+def load_data(path):
+    if path.endswith('.pickle'):
+        return pickle.load(open(path, 'rb'))
+    elif path.endswith('.npy'):
+        return np.load(path)
+    else:
+        raise ValueError('invalid file format')
+
+
 '''
 MODEL
 '''
@@ -94,16 +105,4 @@ def apply_kernel_regularizer(model, kernel_regularizer):
 
     model = tf.keras.models.clone_model(model)
     return model
-
-
-def custom_scheduler(d_model, warmup_steps=4000):
-    # https://www.tensorflow.org/tutorials/text/transformer#optimizer
-    d_model = tf.cast(d_model, tf.float32)
-
-    def _scheduler(step):
-        step = tf.cast(step+1, tf.float32)
-        arg1 = tf.math.rsqrt(step)
-        arg2 = step * (warmup_steps ** -1.5)
-        return tf.math.rsqrt(d_model) * tf.math.minimum(arg1, arg2)
-    return _scheduler
 

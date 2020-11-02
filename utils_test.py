@@ -48,6 +48,9 @@ class UtilsTest(unittest.TestCase):
             self.assertEqual(x[i].tolist(), x_.tolist())
             self.assertEqual(y[i], y_)
 
+    def test_load_data(self):
+        raise NotImplemented('TODO: not yet implemented')
+
     def test_apply_kernel_regularizer(self):
         n_samples, in_shape, out_shape = 128, 4, 4
         x = np.random.randn(n_samples, in_shape)
@@ -77,18 +80,6 @@ class UtilsTest(unittest.TestCase):
 
         for b, n in zip(base_weights, new_weights):
             self.assertNotEqual(b.numpy().tolist(), n.numpy().tolist())
-
-    def test_custom_scheduler(self):
-        batch_size = 64
-        x = np.random.randn(batch_size, 30).astype('float32')
-        y = np.random.randn(batch_size, 5).astype('float32')
-
-        m = tf.keras.Sequential()
-        m.add(tf.keras.layers.Dense(5))
-        m.compile('adam', 'mse')
-        m.fit(x, y, epochs=10,
-              callbacks=[tf.keras.callbacks.LearningRateScheduler(custom_scheduler(30))])
-
 
 if __name__ == '__main__':
     os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'

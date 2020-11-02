@@ -42,64 +42,24 @@ class TransformsTest(tf.test.TestCase):
         self.assertAllEqual(target, 
                             random_shift(org, axis=0, width=2))
 
-    def test_random_magphase_flip(self):
-        tf.random.set_seed(0)
-        # INPUTS
-        spec = np.array([[[ 1,  2, -1, -2],
-                          [ 3,  4, -3, -4],
-                          [ 5,  6,  0,  4]],
-                         [[ 1,  2,  3,  4],
-                          [ 3,  6,  9, 12],
-                          [10, 11, 12, 13]]])
-        label = np.array([[0, 0, 1],
-                          [1, 0, 0]])
-        # TARGETS
-        t_spec = np.array([[[ 2,  1, -2, -1],
-                            [ 4,  3, -4, -3],
-                            [ 6,  5,  4,  0]],
-                           [[ 2,  1,  4,  3],
-                            [ 6,  3, 12,  9],
-                            [11, 10, 13, 12]]])
-        t_label = np.array([[0, 0, 1],
-                            [0, 1, 0]])
-        
-        s, l = random_magphase_flip(spec, label)
-        self.assertAllEqual(t_spec, s)
-        self.assertAllEqual(t_label, l)
+    def test_magphase_to_mel(self):
+        # BATCH
+        n_mels = 80
+        magphase = np.random.randn(32, 257, 100, 4).astype('float32')
+        mel = magphase_to_mel(n_mels)(magphase)
+        self.assertEqual(mel.shape, [32, n_mels, 100, 2])
 
-    def test_magphase_mixup(self):
-        tf.random.set_seed(0)
-        specs = np.array([[[  1., 10.,  0.,  0.],
-                           [ 10.,  5., -1., -3.]],
-                          [[  5.,  5.,  3., -3.],
-                           [ 10.,100.,  0.,  1.]]])
-        labels = np.array([[0., 1., 0.],
-                           [1., 0., 0.]])
-
-        t_specs = np.array([[[ 1.788283, 3.087293, 2.957654,-0.106144],
-                             [ 8.782782,44.648120,-0.539802, 1.045481]],
-                            [[ 2.224290, 2.015974, 2.970586,-0.188880],
-                             [ 8.782782,52.159332,-0.460198, 1.033636]]])
-        t_labels = np.array([[0.463552, 0.536448, 0.      ],
-                             [0.536448, 0.463552, 0.      ]])
-
-        s, l = magphase_mixup(alpha=2.)(specs, labels)
-        self.assertAllClose(t_specs, s)
-        self.assertAllClose(t_labels, l)
-
-        # feat == 'complex'
-        tf.random.set_seed(0)
-        specs = magphase_to_complex(specs)
-        s, l = magphase_mixup(alpha=2., feat='complex')(specs, labels)
-        self.assertAllClose(t_specs, s)
-        self.assertAllClose(t_labels, l)
+        # SINGLE SAMPLE
+        magphase = np.random.randn(257, 100, 4).astype('float32')
+        mel = magphase_to_mel(n_mels)(magphase)
+        self.assertEqual(mel.shape, [n_mels, 100, 2])
 
     def test_log_magphase(self):
         specs = np.array([[  1,  10, 100,   0,   1,  -1],
                           [500,  50,   5,   3,  -3,   0]])
         t_specs = np.array([[0.      , 2.302585, 4.605170,  0,  1, -1],
                             [6.214608, 3.912023, 1.609438,  3, -3,  0]])
-        self.assertAllClose(t_specs, log_magphase(specs))
+        self.assertAllClose(t_specs, log_magphase(specs, n_chan=3))
 
     def test_minmax_norm_magphse(self):
         n_sample, n_feature, n_chan = 5, 10, 2

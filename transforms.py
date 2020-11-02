@@ -20,7 +20,7 @@ def mask(specs, axis, max_mask_size=None, n_mask=1):
     if max_mask_size is None:
         max_mask_size = total
 
-    for i in range(n_mask):
+    def apply_random_mask(mask):
         size = tf.random.uniform([], maxval=max_mask_size, dtype=tf.int32)
         offset = tf.random.uniform([], maxval=total-size, dtype=tf.int32)
 
@@ -29,6 +29,12 @@ def mask(specs, axis, max_mask_size=None, n_mask=1):
              tf.zeros(shape=make_shape(size), dtype=mask.dtype),
              tf.ones(shape=make_shape(total-size-offset), dtype=mask.dtype)),
             axis=axis)
+        return mask
+
+    i = tf.constant(0)
+    cond = lambda i, m: i < n_mask
+    body = lambda i, m: (i+1, apply_random_mask(m))
+    _, mask = tf.while_loop(cond, body, (i, mask))
 
     return specs * mask
 
@@ -41,66 +47,35 @@ def random_shift(specs, axis=0, width=16):
 
 
 """ MAGNITUDE-PHASE SPECTROGRAM """
-def random_magphase_flip(spec, label):
-    flip = tf.cast(tf.random.uniform([]) > 0.5, spec.dtype)
-    n_chan = spec.shape[-1] // 2
-    chans = tf.reshape(tf.range(n_chan*2), (2, n_chan))
-    chans = tf.reshape(tf.reverse(chans, axis=[-1]), (-1,))
-    spec = flip*spec + (1-flip)*tf.gather(spec, chans, axis=-1)
+def magphase_to_mel(num_mel_bins=100, 
+                    num_spectrogram_bins=257, 
+                    sample_rate=16000):
+    mel_matrix = tf.signal.linear_to_mel_weight_matrix(
+        num_mel_bins, num_spectrogram_bins, sample_rate)
 
-    flip = tf.cast(flip, label.dtype)
-    label = flip*label \
-            + (1-flip)*tf.concat(
-                [tf.reverse(label[..., :-1], axis=(-1,)), label[..., -1:]],
-                axis=-1)
+    def _magphase_to_mel(x, y=None):
+        '''
+        x: [batch_size, freq, time, chan2]
 
-    return spec, label
-
-
-def magphase_mixup(alpha=2., feat='magphase'):
-    '''
-    returns magphase
-    '''
-    assert feat in ['magphase', 'complex']
-    import tensorflow_probability as tfp
-    beta = tfp.distributions.Beta(alpha, alpha)
-
-    def _mixup(specs, labels):
-        # preprocessing
-        specs = tf.cast(specs, dtype=tf.float32)
-        labels = tf.cast(labels, dtype=tf.float32)
-
-        indices = tf.reduce_mean(
-            tf.ones_like(labels, dtype=tf.int32),
-            axis=range(1, len(labels.shape)))
-        indices = tf.cumsum(indices, exclusive=True)
-        indices = tf.random.shuffle(indices)
-
-        # assume mag, phase...
-        if feat == 'magphase':
-            specs = magphase_to_complex(specs)
-        n_chan = specs.shape[-1] // 2
-        real, img = specs[..., :n_chan], specs[..., n_chan:]
-
-        l = beta.sample()
-
-        real = l*real + (1-l)*tf.gather(real, indices, axis=0)
-        img = l*img + (1-l)*tf.gather(img, indices, axis=0)
+        output: [batch_size, mel_freq, time, chan]
+        '''
+        x = x[..., :tf.shape(x)[-1] // 2] # remove phase
+        x = tf.tensordot(x, mel_matrix, axes=[-3, 0]) # [b, time, chan, mel]
         
-        mag = tf.math.sqrt(real**2 + img**2)
-        phase = tf.math.atan2(img, real)
+        if len(x.shape) == 4:
+            x = tf.transpose(x, perm=[0, 3, 1, 2])
+        elif len(x.shape) == 3:
+            x = tf.transpose(x, perm=[2, 0, 1])
+        else:
+            raise ValueError('len(x.shape) must be 3 or 4')
 
-        specs = tf.concat([mag, phase], axis=-1)
-        labels = tf.cast(labels, tf.float32)
-        labels = l*labels + (1-l)*tf.gather(labels, indices, axis=0)
-        
-        return specs, labels
-
-    return _mixup
+        if y is None:
+            return x
+        return x, y
+    return _magphase_to_mel 
 
 
-def log_magphase(specs, labels=None):
-    n_chan = specs.shape[-1] // 2
+def log_magphase(specs, labels=None, n_chan=2):
     specs = tf.concat(
             [tf.math.log(specs[..., :n_chan]+EPSILON), specs[..., n_chan:]],
             axis=-1)

@@ -59,7 +59,10 @@ class PipelineTest(tf.test.TestCase):
         y = np.random.randn(n_voices, n_frame, self.n_classes).astype('float32')
 
         _, y_ = to_class_labels(x, y)
-        self.assertEqual(y_.shape, [3, 10])
+        self.assertEqual(y_.shape, [30])
+
+        _, y_ = to_class_labels(x, y[np.newaxis, :])
+        self.assertEqual(y_.shape, [1, 30])
 
     def test_make_pipeline(self):
         n_frame = 30

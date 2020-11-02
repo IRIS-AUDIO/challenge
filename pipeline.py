@@ -96,22 +96,21 @@ def to_frame_labels(x, y):
     """
 
     :param x:
-    :param y: [n_voices, n_frames, n_classes]
-    :return: [n_frames, n_classes]
+    :param y: [..., n_voices, n_frames, n_classes]
+    :return: [..., n_frames, n_classes]
     """
-    y = tf.reduce_sum(y, axis=0)
+    y = tf.reduce_sum(y, axis=-3)
     y = tf.clip_by_value(y, 0, 1)
     return x, y
 
 
 def to_class_labels(x, y):
     '''
-    INPUT - y : [n_voices, n_frames, 30]
-    OUTPUT - y: [3, 10]
+    INPUT - y : [..., n_voices, n_frames, 30]
+    OUTPUT - y: [..., 30]
     '''
-    y = tf.reduce_max(y, axis=1)
-    y = tf.reduce_sum(y, axis=0)
-    y = tf.reshape(y, [3, 10])
+    y = tf.reduce_max(y, axis=-2) # [..., n_voices, 30]
+    y = tf.reduce_sum(y, axis=-2) # [..., 30]
     return x, y
 
 

@@ -1,5 +1,6 @@
-import os
 import numpy as np
+import os
+import pickle
 import tensorflow as tf
 
 EPSILON = 1e-8
@@ -33,6 +34,7 @@ def seq_to_windows(seq,
         seq = np.pad(
             seq,
             [[win_size//2, (win_size-1)//2]] + [[0, 0]]*len(seq.shape[1:]),
+            mode='constant',
             **kwargs)
 
     return np.take(seq, windows, axis=0)
@@ -80,6 +82,15 @@ def list_to_generator(dataset: list):
             for data in dataset:
                 yield data
     return _gen
+
+
+def load_data(path):
+    if path.endswith('.pickle'):
+        return pickle.load(open(path, 'rb'))
+    elif path.endswith('.npy'):
+        return np.load(path)
+    else:
+        raise ValueError('invalid file format')
 
 
 '''

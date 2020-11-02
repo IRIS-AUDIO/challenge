@@ -48,6 +48,9 @@ class UtilsTest(unittest.TestCase):
             self.assertEqual(x[i].tolist(), x_.tolist())
             self.assertEqual(y[i], y_)
 
+    def test_load_data(self):
+        raise NotImplemented('TODO: not yet implemented')
+
     def test_apply_kernel_regularizer(self):
         n_samples, in_shape, out_shape = 128, 4, 4
         x = np.random.randn(n_samples, in_shape)

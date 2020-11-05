@@ -7,6 +7,8 @@ from tensorflow.keras.callbacks import *
 from tensorflow.keras.losses import *
 from tensorflow.keras.metrics import *
 from tensorflow.keras.optimizers import *
+import tensorflow.keras.backend as K
+from tensorflow.keras.utils import multi_gpu_model
 
 import efficientnet.model as model
 from metrics import *
@@ -17,48 +19,59 @@ from transforms import *
 from utils import *
 from models import transformer_layer
 
+np.set_printoptions(precision=4)
+
 
 args = argparse.ArgumentParser()
 args.add_argument('--name', type=str, required=True)
-args.add_argument('--model', type=str, default='EfficientNetB2')
+args.add_argument('--model', type=str, default='EfficientNetB4')
+args.add_argument('--gpus', type=int, default=[0], nargs='+')
+args.add_argument('--mode', type=str, default='GRU',
+                                 choices=['GRU', 'transformer'])
 args.add_argument('--pretrain', type=bool, default=False)
 args.add_argument('--n_layers', type=int, default=0)
 args.add_argument('--n_dim', type=int, default=256)
 args.add_argument('--n_heads', type=int, default=8)
+args.add_argument('--n_classes', type=int, default=30)
+args.add_argument('--n_mels', type=int, default=128)
 
 # DATA
 args.add_argument('--background_sounds', type=str,
-                  default='/codes/generate_wavs/drone_normed_complex_v2.pickle')
+                  default='generate_wavs/codes/drone_normed_complex.pickle')
 args.add_argument('--voices', type=str,
-                  default='/codes/generate_wavs/voice_normed_complex.pickle')
+                  default='generate_wavs/codes/voice_normed_complex.pickle')
 args.add_argument('--labels', type=str,
-                  default='/codes/generate_wavs/voice_labels_mfc.npy')
+                  default='generate_wavs/codes/voice_labels_mfc.npy')
 args.add_argument('--noises', type=str,
-                  default='/codes/RDChallenge/tf_codes/sounds/noises_specs.pickle')
+                  default='generate_wavs/codes/noises_specs.pickle')
 args.add_argument('--test_background_sounds', type=str,
-                  default='/codes/generate_wavs/test_drone_normed_complex.pickle')
+                  default='generate_wavs/codes/test_drone_normed_complex.pickle')
 args.add_argument('--test_voices', type=str,
-                  default='/codes/generate_wavs/test_voice_normed_complex.pickle')
+                  default='generate_wavs/codes/test_voice_normed_complex.pickle')
 args.add_argument('--test_labels', type=str,
-                  default='/codes/generate_wavs/test_voice_labels_mfc.npy')
-args.add_argument('--n_mels', type=int, default=128)
+                  default='generate_wavs/codes/test_voice_labels_mfc.npy')
 
 # TRAINING
 args.add_argument('--optimizer', type=str, default='adam',
                                  choices=['adam', 'sgd', 'rmsprop'])
 args.add_argument('--lr', type=float, default=0.001)
+args.add_argument('--lr_factor', type=float, default=0.7)
+args.add_argument('--lr_patience', type=int, default=10)
 
 args.add_argument('--epochs', type=int, default=500)
-args.add_argument('--batch_size', type=int, default=12)
+args.add_argument('--batch_size', type=int, default=8)
 args.add_argument('--n_frame', type=int, default=2048)
 args.add_argument('--steps_per_epoch', type=int, default=100)
 args.add_argument('--l2', type=float, default=1e-6)
 
 # AUGMENTATION
+args.add_argument('--alpha', type=float, default=0.8)
 args.add_argument('--snr', type=float, default=-15)
 args.add_argument('--max_voices', type=int, default=10)
 args.add_argument('--max_noises', type=int, default=5)
 
+args.add_argument('--reverse', type=bool, default=True)
+args.add_argument('--multiplier', type=float, default=10.)
 MULTIPLIER = 10
 
 
@@ -190,6 +203,34 @@ def d_total(y_true, y_pred, apply_round=True):
     return 0.8 * d_dir + 0.2 * d_cls
 
 
+def d_total_z(y_true, y_pred, apply_round=True):
+    y_true /= MULTIPLIER
+    y_pred = K.zeros_like(y_pred)
+    y_pred /= MULTIPLIER
+
+    # [None, time, 30] -> [None, time, 3, 10]
+    y_true = tf.stack(tf.split(y_true, 3, axis=-1), axis=-2)
+    y_pred = tf.stack(tf.split(y_pred, 3, axis=-1), axis=-2)
+
+    # d_dir
+    d_true = tf.reduce_sum(y_true, axis=(-3, -2))
+    d_pred = tf.reduce_sum(y_pred, axis=(-3, -2))
+    if apply_round:
+        d_true = tf.math.round(d_true)
+        d_pred = tf.math.round(d_pred)
+    d_dir = D_direction(d_true, d_pred)
+
+    # c_cls
+    c_true = tf.reduce_sum(y_true, axis=(-3, -2))
+    c_pred = tf.reduce_sum(y_pred, axis=(-3, -2))
+    if apply_round:
+        c_true = tf.math.round(c_true)
+        c_pred = tf.math.round(c_pred)
+    d_cls = D_class(c_true, c_pred)
+
+    return 0.8 * d_dir + 0.2 * d_cls
+
+
 def custom_loss(y_true, y_pred, alpha=0.8, l2=0.5):
     # y_true, y_pred = [None, time, 30]
     # [None, time, 30] -> [None, time, 3, 10]
@@ -252,7 +293,7 @@ if __name__ == "__main__":
 
     TOTAL_EPOCH = config.epochs
     BATCH_SIZE = config.batch_size
-    NAME = config.name if config.name.endswith('.h5') else config.name + '.h5'
+    NAME = (config.name if config.name.endswith('.h5') else config.name + '.h5')
 
     """ MODEL """
     x = tf.keras.layers.Input(shape=(config.n_mels, config.n_frame, 2))
@@ -269,11 +310,25 @@ if __name__ == "__main__":
     out = tf.keras.layers.Reshape([-1, out.shape[-1]*out.shape[-2]])(out)
 
     if config.n_layers > 0:
-        out = tf.keras.layers.Dense(config.n_dim)(out)
-        for i in range(config.n_layers):
-            out = transformer_layer(config.n_dim, config.n_heads)(out)
+        if config.mode == 'GRU':
+            out = tf.keras.layers.Dense(config.n_dim)(out)
+            for i in range(config.n_layers):
+                # out = transformer_layer(config.n_dim, config.n_heads)(out)
+                out = tf.keras.layers.Bidirectional(
+                    tf.keras.layers.GRU(config.n_dim, return_sequences=True),
+                    backward_layer=tf.keras.layers.GRU(config.n_dim, 
+                                                       return_sequences=True,
+                                                       go_backwards=True))(out)
+        elif config.mode == 'transformer':
+            out = tf.keras.layers.Dense(config.n_dim)(out)
+            out = encoder(config.n_layers,
+                          config.n_dim,
+                          config.n_heads)(out)
 
-    out = tf.keras.layers.Dense(30, activation='relu')(out)
+            out = tf.keras.layers.Flatten()(out)
+            out = tf.keras.layers.ReLU()(out)
+
+    out = tf.keras.layers.Dense(config.n_classes, activation='relu')(out)
     model = tf.keras.models.Model(inputs=model.input, outputs=out)
 
     if config.pretrain:
@@ -290,10 +345,13 @@ if __name__ == "__main__":
     if config.l2 > 0:
         model = apply_kernel_regularizer(
             model, tf.keras.regularizers.l2(config.l2))
+
+    if len(config.gpus) > 1:
+        model = multi_gpu_model(model, gpus=len(config.gpus))
     model.compile(optimizer=opt, 
                   loss=custom_loss,
-                  metrics=[d_total, cos_sim])
-    model.summary()
+                  metrics=[d_total, d_total_z, cos_sim])
+    #model.summary()
     
 
     """ DATA """

@@ -57,15 +57,58 @@ def main(config):
     
     
     with strategy.scope():
-        model = getattr(models, 'model')(config)
+        model = getattr(models, 'model')(config).clf_model
         
         train_set = make_dataset(config, training=True)
         test_set = make_dataset(config, training=False)
+        
 
+        if config.optimizer == 'adam':
+            opt = Adam(config.lr) 
+        elif config.optimizer == 'sgd':
+            opt = SGD(config.lr, momentum=0.9)
+        else:
+            opt = RMSprop(config.lr, momentum=0.9)
 
-        for i, jj in train_set.take(1):
-            pdb.set_trace()
-            print(i.shape, jj.shape)
+        if config.l2 > 0:
+            model = apply_kernel_regularizer(
+                model, tf.keras.regularizers.l2(config.l2))
+
+        if config.mode == 'regr':
+            loss = 'MAE'
+            model.layers[-1].activation = tf.keras.activations.relu
+        elif config.mode == 'clf':
+            loss = 'sparse_categorical_crossentropy'
+        model.compile(optimizer=opt, 
+                      loss=loss, # 'binary_crossentropy',
+                      metrics=['accuracy'])
+        model.summary()
+        
+        """ TRAINING """
+        callbacks = [
+            # CSVLogger(NAME.replace('.h5', '.log'),
+            #           append=True),
+            LearningRateScheduler(custom_scheduler(config.n_dim*8, 
+                                                   TOTAL_EPOCH/10)),
+            # SWA(start_epoch=TOTAL_EPOCH//2, swa_freq=2),
+            ModelCheckpoint(NAME,
+                            monitor='val_accuracy',
+                            mode='max',
+                            save_best_only=True),
+            TerminateOnNaN(),
+            TensorBoard(log_dir='tensorboard_log/'+config.name)
+        ]
+
+        model.fit(train_set,
+                  epochs=config.epochs,
+                  batch_size=config.batch_size,
+                  steps_per_epoch=config.steps_per_epoch,
+                  validation_data=test_set,
+                  validation_steps=24,
+                  callbacks=callbacks)
+
+        # for i,jj in train_set.take(1):
+        #     pdb.set_trace()
 
 if __name__ == "__main__":
     import sys

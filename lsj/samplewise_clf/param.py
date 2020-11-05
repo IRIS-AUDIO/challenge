@@ -5,8 +5,9 @@ def get_args(known = []):
     args = argparse.ArgumentParser()
     args.add_argument('--name', type=str, required=True)
     args.add_argument('--model', type=str, default='EfficientNetB0')
+    args.add_argument('--mode', type=str, default='regr', choices=['regr', 'clf'])
     args.add_argument('--pretrain', type=bool, default=False)
-    args.add_argument('--framewise', action='store_true')
+    # args.add_argument('--framewise', action='store_true')
 
     # Model
     args.add_argument('--feature_extractor', type=str, default='EfficientNetB0', choices=['EfficientNetB'+str(i) for i in range(8)])
@@ -30,10 +31,11 @@ def get_args(known = []):
     args.add_argument('--lr_patience', type=int, default=10)
 
     args.add_argument('--epochs', type=int, default=200)
-    args.add_argument('--batch_size', type=int, default=16)
+    args.add_argument('--batch_size', type=int, default=32)
     args.add_argument('--n_frame', type=int, default=1000)
     args.add_argument('--steps_per_epoch', type=int, default=500)
     args.add_argument('--l2', type=float, default=1e-6)
+    args.add_argument('--n_dim', type=int, default=256)
 
     # TEST
     args.add_argument('--test_background_sounds', type=str,

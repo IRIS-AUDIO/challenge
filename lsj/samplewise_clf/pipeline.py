@@ -95,14 +95,85 @@ def to_frame_labels(x, y):
     """
 
     :param x:
-    :param y: [n_voices, n_frames, n_classes]
-    :return: [n_frames, n_classes]
+    :param y: [..., n_voices, n_frames, n_classes]
+    :return: [..., n_frames, n_classes]
     """
-    y = tf.reduce_sum(y, axis=0)
+    y = tf.reduce_sum(y, axis=-3)
     y = tf.clip_by_value(y, 0, 1)
     return x, y
 
 
+def to_class_labels(x, y):
+    '''
+    INPUT - y : [..., n_voices, n_frames, 30]
+    OUTPUT - y: [..., 30]
+    '''
+    y = tf.reduce_max(y, axis=-2) # [..., n_voices, 30]
+    y = tf.reduce_sum(y, axis=-2) # [..., 30]
+    return x, y
 
 
+def make_pipeline(backgrounds, # a list of backgrounds noises
+                  voices, # a list of human voicess
+                  labels, # a list of labelss of human voicess
+                  noises=None, # a list of additional noises
+                  n_frame=300, # number of frames per sample
+                  max_voices=10,
+                  max_noises=10,
+                  n_classes=30,
+                  **kwargs):
+    '''
+    OUTPUT
+        dataset: tf.data.Dataset
+                 it only returns a raw complex spectrogram
+                 and its labels
+                 you have to apply augmentations (ex. mixup)
+                 or preprocessing functions (ex. applying log)
+                 you don't have to apply shuffle
+
+                 complex spectrogram: [freq_bins, n_frame, chan*2]
+                     [..., :chan] = real
+                     [..., chan:] = imag
+                 labels: [n_frame, n_classes]
+    '''
+    assert len(backgrounds[0].shape) == 3, 'each spec must be a 3D-tensor'
+    assert len(voices) == len(labels)
+    assert len(labels[0].shape) == 1 and labels[0].shape[0] == n_classes, \
+           'labels must be in the form of [n_samples, n_classes]'
+
+    # BACKGROUND NOISE (DRONE)
+    freq, _, chan = backgrounds[0].shape
+    b_dataset = tf.data.Dataset.from_generator(
+        list_to_generator(backgrounds),
+        tf.float32,
+        tf.TensorShape([freq, None, chan]))
+    b_dataset = b_dataset.repeat().shuffle(len(backgrounds))
+
+    # HUMAN VOICE
+    v_dataset = tf.data.Dataset.from_generator(
+        list_to_generator((voices, labels)),
+        (tf.float32, tf.float32),
+        (tf.TensorShape([freq, None, chan]), tf.TensorShape([n_classes])))
+    v_dataset = v_dataset.repeat().shuffle(len(voices))
+    v_dataset = v_dataset.padded_batch(
+        max_voices, padded_shapes=([freq, None, chan], [n_classes]))
+
+    # NOISES
+    if noises is not None:
+        n_dataset = tf.data.Dataset.from_generator(
+            list_to_generator(noises),
+            tf.float32,
+            tf.TensorShape([freq, None, chan]))
+        n_dataset = n_dataset.repeat().shuffle(len(noises))
+        n_dataset = n_dataset.padded_batch(
+            max_noises, padded_shapes=[freq, None, chan])
+        dataset = tf.data.Dataset.zip((b_dataset, v_dataset, n_dataset))
+    else:
+        dataset = tf.data.Dataset.zip((b_dataset, v_dataset))
+
+    dataset = dataset.map(partial(merge_complex_specs,
+                                  n_frame=n_frame,
+                                  n_classes=n_classes,
+                                  **kwargs))
+    return dataset
 

@@ -129,7 +129,5 @@ dmypy.json
 .pyre/
 
 generate*
-logs
 *.h5
-*.log
 *.sh

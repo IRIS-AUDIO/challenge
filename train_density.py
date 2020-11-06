@@ -247,7 +247,7 @@ def custom_loss(y_true, y_pred, alpha=0.8, l2=0.5):
 
     loss = alpha * tf.keras.losses.MAE(tf.reduce_sum(d_y_true, axis=1),
                                        tf.reduce_sum(d_y_pred, axis=1)) \
-         + (1-alpha) * tf.keras.losses.MSE(tf.reduce_sum(c_y_true, axis=1),
+         + (1-alpha) * tf.keras.losses.MAE(tf.reduce_sum(c_y_true, axis=1),
                                            tf.reduce_sum(c_y_pred, axis=1))
 
     # TODO: OT loss

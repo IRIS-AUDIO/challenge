@@ -25,7 +25,7 @@ class model:
             out3 = tf.expand_dims(Dense(256, activation='relu')(out), -2)
 
             out = Concatenate(axis=-2)([out1, out2, out3])
-            out = Dense(10, activation='softmax')(out)
+            out = Dense(50, activation='softmax')(out)
         elif config.mode == 'regr':
             out = Dense(64, activation='relu')(out)
             out = Dense(3, activation='sigmoid')(out)

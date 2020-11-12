@@ -19,12 +19,9 @@ def main(config):
 
     strategy = tf.distribute.MirroredStrategy()
 
-    TOTAL_EPOCH = config.epochs
     BATCH_SIZE = config.batch_size
     NAME = config.name if config.name.endswith('.h5') else config.name + '.h5'
-    
-    
-    
+            
     with strategy.scope():
         model = getattr(models, 'model')(config).clf_model
         if config.mode == 'regr':

@@ -63,6 +63,11 @@ args.add_argument('--snr', type=float, default=-15)
 args.add_argument('--max_voices', type=int, default=10)
 args.add_argument('--max_noises', type=int, default=6)
 
+# @tf.function
+# def _tf_log10(x):
+#     numerator = tf.math.log(x)
+#     denominator = tf.math.log(tf.constant(10, dtype=numerator.dtype))
+#     return numerator / denominator
 
 def minmax_log_on_mel(mel, labels=None):
     axis = tuple(range(1, len(mel.shape)))
@@ -74,6 +79,8 @@ def minmax_log_on_mel(mel, labels=None):
 
     # LOG
     mel = tf.math.log(mel + EPSILON)
+    
+
 
     if labels is not None:
         return mel, labels
@@ -139,7 +146,6 @@ def make_dataset(config, training=True):
         labels = load_data(config.test_labels)
     labels = np.eye(30, dtype='float32')[labels] # to one-hot vectors
     noises = load_data(config.noises)
-
     # Make pipeline and process the pipeline
     pipeline = make_pipeline(backgrounds, 
                              voices, labels,

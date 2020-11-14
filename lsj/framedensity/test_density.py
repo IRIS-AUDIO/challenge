@@ -58,6 +58,7 @@ args.add_argument('--max_noises', type=int, default=3)
 
 args.add_argument('--reverse', type=bool, default=True)
 args.add_argument('--multiplier', type=float, default=10.)
+args.add_argument('--filter', type=int, default=0)
 
 
 def minmax_log_on_mel(mel, labels=None):
@@ -279,9 +280,20 @@ if __name__ == "__main__":
     wavs = list(map(lambda x: tf.pad(x, [[0, 0], [0, target[1]-x.shape[1]], [0, 0]]), 
                     wavs)) 
     wavs = tf.convert_to_tensor(wavs) 
+    filterHz = config.filter
+    ## filter ##
+    if filterHz != 0:
+        wavs *= tf.concat([tf.zeros_like(wavs[:,:int(filterHz // (16000/512))]), tf.ones_like(wavs[:,int(filterHz // (16000/512)):])], 1)
+    
     wavs = complex_to_magphase(wavs) 
     wavs = magphase_to_mel(config.n_mels)(wavs) 
-    wavs = minmax_log_on_mel(wavs) 
+    wavs = minmax_log_on_mel(wavs)
+    wavs = tf.concat([wavs, tf.reverse(wavs, axis=[-1])], axis=0)
+
+    gt_angle = tf.concat([gt_angle, tf.reverse(gt_angle, axis=[-1])], axis=0)
+    gt_class = tf.concat([gt_class, gt_class], axis=0)
+
+
     wavs = model.predict(wavs) 
     wavs = wavs / config.multiplier
     wavs = tf.reshape(wavs, [*wavs.shape[:2], 3, 10])
@@ -299,7 +311,6 @@ if __name__ == "__main__":
     print(d_total, d_total.mean())
 
     for i in range(len(gt_angle)):
-        # plt.imshow(wav); plt.show()
-        print(angles[i].numpy(), classes[i].numpy())
-        print(gt_angle[i], gt_class[i])
+        print(tf.cast(angles[i], tf.int32).numpy(), tf.cast(classes[i], tf.int32).numpy())
+        print(gt_angle[i].numpy(), gt_class[i].numpy())
         print()

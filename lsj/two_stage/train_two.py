@@ -304,7 +304,7 @@ def cos_sim(y_true, y_pred):
         tf.keras.losses.cosine_similarity(y_true, y_pred, axis=-2) * mask, 
         axis=-1)
 
-# @tf.function
+@tf.function
 def d_num_total(y_true, y_pred, apply_round=True, multiplier=10):
     y_true /= multiplier
     y_pred /= multiplier
@@ -313,13 +313,13 @@ def d_num_total(y_true, y_pred, apply_round=True, multiplier=10):
     y_true = tf.stack(tf.split(y_true, 3, axis=-1), axis=-2)
     y_pred = y_pred
 
-    pdb.set_trace()
     # c_cls
-    c_true = tf.reduce_sum(y_true, axis=(-3, -2))
-    c_pred = tf.reduce_sum(y_pred, axis=-2)
+    c_true = tf.reduce_sum(y_true, axis=(-3, -1))
+    c_pred = y_pred
     if apply_round:
         c_true = tf.math.round(c_true)
         c_pred = tf.math.round(c_pred)
+    
     d_cls = D_class(c_true, c_pred)
 
     return 0.2 * d_cls
@@ -333,13 +333,13 @@ def d_doa_total(y_true, y_pred, apply_round=True, multiplier=10):
     y_true = tf.stack(tf.split(y_true, 3, axis=-1), axis=-2)
     y_pred = y_pred # [None, time, 10]
 
-    pdb.set_trace()
     # d_dir
     d_true = tf.reduce_sum(y_true, axis=(-3, -2))
-    d_pred = tf.reduce_sum(y_pred, axis=-2)
+    d_pred = y_pred
     if apply_round:
         d_true = tf.math.round(d_true)
         d_pred = tf.math.round(d_pred)
+    
     d_dir = D_direction(d_true, d_pred)
 
     return 0.8 * d_dir

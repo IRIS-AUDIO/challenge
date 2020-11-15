@@ -280,11 +280,14 @@ if __name__ == "__main__":
     wavs = list(map(lambda x: tf.pad(x, [[0, 0], [0, target[1]-x.shape[1]], [0, 0]]), 
                     wavs)) 
     wavs = tf.convert_to_tensor(wavs)
-
+    import pdb; pdb.set_trace()
     # filterHz = config.filter
     # ## filter ##
     # if filterHz != 0:
     #     wavs *= tf.concat([tf.zeros_like(wavs[:,:int(filterHz // (16000/512))]), tf.ones_like(wavs[:,int(filterHz // (16000/512)):])], 1)
+    
+    
+    
     import librosa
     def filt(wavs):
         # n,d,4

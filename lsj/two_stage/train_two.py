@@ -368,17 +368,22 @@ def train(first_model, second_model, trainset, testset, opt_num, opt_do, config)
     best_score = 10000
     tensorboard_dir = 'tensorboard_log/' + config.name + '/train'
     model_dir = 'model_save/' + config.name
+    if not os.path.exists(model_dir+'/'+config.name):
+        os.makedirs(model_dir+'/'+config.name)
     summary_writer = tf.summary.create_file_writer(tensorboard_dir)
+
     train_num_loss = tf.keras.metrics.Mean('train_num_loss', dtype=tf.float32)
     train_doa_loss = tf.keras.metrics.Mean('train_doa_loss', dtype=tf.float32)
     train_num_cos = tf.keras.metrics.Mean('train_num_cos', dtype=tf.float32)
     train_doa_cos = tf.keras.metrics.Mean('train_doa_cos', dtype=tf.float32)
-    train_d_total = tf.keras.metrics.Mean('train_d_total', dtype=tf.float32)
+    train_d_num = tf.keras.metrics.Mean('train_d_num', dtype=tf.float32)
+    train_d_doa = tf.keras.metrics.Mean('train_d_doa', dtype=tf.float32)
     val_num_loss = tf.keras.metrics.Mean('val_num_loss', dtype=tf.float32)
     val_doa_loss = tf.keras.metrics.Mean('val_doa_loss', dtype=tf.float32)
     val_num_cos = tf.keras.metrics.Mean('val_num_cos', dtype=tf.float32)
     val_doa_cos = tf.keras.metrics.Mean('val_doa_cos', dtype=tf.float32)
-    val_d_total = tf.keras.metrics.Mean('val_d_total', dtype=tf.float32)
+    val_d_num = tf.keras.metrics.Mean('val_d_num', dtype=tf.float32)
+    val_d_doa = tf.keras.metrics.Mean('val_d_doa', dtype=tf.float32)
 
     for epoch in range(config.epochs):
         with tqdm(train_set) as pbar:
@@ -388,29 +393,32 @@ def train(first_model, second_model, trainset, testset, opt_num, opt_do, config)
 
                 num_lossval, num_logits, num_cos, num_grads = train_step(first_model, num_loss, x_batch, num_y_batch, train=True)
                 opt_num.apply_gradients(zip(num_grads, first_model.trainable_weights))
-                score = d_num_total(Y_batch, num_logits)
+                num_score = d_num_total(Y_batch, num_logits)
 
                 numbers = tf.reshape(tf.repeat(num_logits, x_batch.shape[1] * x_batch.shape[2], 0), (x_batch.shape[0], x_batch.shape[1], x_batch.shape[2],3))
                 doa_lossval, doa_logits, doa_cos, doa_grads = train_step(second_model, doa_loss, tf.concat([x_batch, numbers], -1), doa_y_batch, train=True)
                 opt_do.apply_gradients(zip(doa_grads, second_model.trainable_weights))
-                score += d_doa_total(Y_batch, doa_logits)
+                doa_score = d_doa_total(Y_batch, doa_logits)
                 
                 train_num_loss.update_state(num_lossval)
                 train_doa_loss.update_state(doa_lossval)
                 train_num_cos.update_state(num_cos)
                 train_doa_cos.update_state(doa_cos)
-                train_d_total.update_state(score)
+                train_d_num.update_state(num_score)
+                train_d_doa.update_state(doa_score)
                 
                 if step == config.steps_per_epoch:
                     break
                 pbar.set_postfix(epoch=f'{epoch:3}')
 
         with summary_writer.as_default():
-            tf.summary.scalar('num_loss', train_num_loss.result(), step=epoch)
-            tf.summary.scalar('doa_loss', train_doa_loss.result(), step=epoch)
-            tf.summary.scalar('num_cos', train_num_cos.result(), step=epoch)
-            tf.summary.scalar('doa_cos', train_doa_cos.result(), step=epoch)
-            tf.summary.scalar('d_total', train_d_total.result(), step=epoch)
+            tf.summary.scalar('train/num_loss', train_num_loss.result(), step=epoch)
+            tf.summary.scalar('train/doa_loss', train_doa_loss.result(), step=epoch)
+            tf.summary.scalar('train/num_cos', train_num_cos.result(), step=epoch)
+            tf.summary.scalar('train/doa_cos', train_doa_cos.result(), step=epoch)
+            tf.summary.scalar('train/d_doa', train_d_doa.result(), step=epoch)
+            tf.summary.scalar('train/d_num', train_d_num.result(), step=epoch)
+            tf.summary.scalar('train/d_total', train_d_doa.result() + train_d_num.result(), step=epoch)
 
         with tqdm(test_set) as pbar:
             for step, (x_batch, Y_batch) in enumerate(pbar):
@@ -418,37 +426,44 @@ def train(first_model, second_model, trainset, testset, opt_num, opt_do, config)
                 doa_y_batch = Y_batch
 
                 num_lossval, num_logits, num_cos, num_grads = train_step(first_model, num_loss, x_batch, num_y_batch, train=False)
-                score = d_num_total(Y_batch, num_logits)
+                num_score = d_num_total(Y_batch, num_logits)
                 numbers = tf.reshape(tf.repeat(num_logits, x_batch.shape[1] * x_batch.shape[2], 0), (x_batch.shape[0], x_batch.shape[1], x_batch.shape[2],3))
                 doa_lossval, doa_logits, doa_cos, doa_grads = train_step(second_model, doa_loss, tf.concat([x_batch, numbers], -1), doa_y_batch, train=False)
-                score += d_doa_total(Y_batch, doa_logits)
+                doa_score = d_doa_total(Y_batch, doa_logits)
                 
                 val_num_loss.update_state(num_lossval)
                 val_doa_loss.update_state(doa_lossval)
                 val_num_cos.update_state(num_cos)
                 val_doa_cos.update_state(doa_cos)
-                val_d_total.update_state(score)
+                val_d_num.update_state(num_score)
+                val_d_doa.update_state(doa_score)
 
                 if step == config.steps_per_epoch:
                     break
                 pbar.set_postfix(epoch=f'val{epoch:3}')
 
         with summary_writer.as_default():
-            tf.summary.scalar('num_loss', val_num_loss.result(), step=epoch)
-            tf.summary.scalar('doa_loss', val_doa_loss.result(), step=epoch)
-            tf.summary.scalar('num_cos', val_num_cos.result(), step=epoch)
-            tf.summary.scalar('doa_cos', val_doa_cos.result(), step=epoch)
-            tf.summary.scalar('d_total', val_d_total.result(), step=epoch)
+            tf.summary.scalar('val/num_loss', val_num_loss.result(), step=epoch)
+            tf.summary.scalar('val/doa_loss', val_doa_loss.result(), step=epoch)
+            tf.summary.scalar('val/num_cos', val_num_cos.result(), step=epoch)
+            tf.summary.scalar('val/doa_cos', val_doa_cos.result(), step=epoch)
+            tf.summary.scalar('val/d_doa', val_d_doa.result(), step=epoch)
+            tf.summary.scalar('val/d_num', val_d_num.result(), step=epoch)
+            tf.summary.scalar('val/d_total', val_d_doa.result() + val_d_num.result(), step=epoch)
 
-        if val_d_total.result() <= best_score:
-            first_model.save(model_dir+'_first.h5')
-            second_model.save(model_dir+'_second.h5')
-            best_score = val_d_total.result()
+        if val_d_doa.result() + val_d_num.result() <= best_score:
+            first_model.save(model_dir+'/'+config.name+'_first.h5')
+            second_model.save(model_dir+'/'+config.name+'_second.h5')
+            best_score = val_d_doa.result() + val_d_num.result()
 
         train_num_loss.reset_states()
         train_doa_loss.reset_states()
         train_num_cos.reset_states()
         train_doa_cos.reset_states()
+        train_d_doa.reset_states()
+        train_d_num.reset_states()
+        val_d_doa.reset_states()
+        val_d_num.reset_states()
         val_num_loss.reset_states()
         val_doa_loss.reset_states()
         val_num_cos.reset_states()

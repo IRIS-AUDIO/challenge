@@ -180,8 +180,8 @@ def d_total(y_true, y_pred, apply_round=True):
     d_dir = D_direction(d_true, d_pred)
 
     # c_cls
-    c_true = tf.reduce_sum(y_true, axis=(-3, -2))
-    c_pred = tf.reduce_sum(y_pred, axis=(-3, -2))
+    c_true = tf.reduce_sum(y_true, axis=(-3, -1))
+    c_pred = tf.reduce_sum(y_pred, axis=(-3, -1))
     if apply_round:
         c_true = tf.math.round(c_true)
         c_pred = tf.math.round(c_pred)

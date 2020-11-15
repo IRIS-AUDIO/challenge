@@ -279,13 +279,25 @@ if __name__ == "__main__":
     target = max([tuple(wav.shape) for wav in wavs]) 
     wavs = list(map(lambda x: tf.pad(x, [[0, 0], [0, target[1]-x.shape[1]], [0, 0]]), 
                     wavs)) 
-    wavs = tf.convert_to_tensor(wavs) 
-    filterHz = config.filter
-    ## filter ##
-    if filterHz != 0:
-        wavs *= tf.concat([tf.zeros_like(wavs[:,:int(filterHz // (16000/512))]), tf.ones_like(wavs[:,int(filterHz // (16000/512)):])], 1)
+    wavs = tf.convert_to_tensor(wavs)
+
+    # filterHz = config.filter
+    # ## filter ##
+    # if filterHz != 0:
+    #     wavs *= tf.concat([tf.zeros_like(wavs[:,:int(filterHz // (16000/512))]), tf.ones_like(wavs[:,int(filterHz // (16000/512)):])], 1)
+    import librosa
+    def filt(wavs):
+        # n,d,4
+        def _filt(wav):
+            return librosa.decompose.hpss(wavs)[0]
+        import pdb; pdb.set_trace()
+        wavs = wavs.numpy().transpose((2,0,1))
+        wavs = np.concatenate([np.array(list(map(_filt, wavs[:2]))), wavs[2:]])
+        return tf.convert_to_tensor(wavs)
     
-    wavs = complex_to_magphase(wavs) 
+    wavs = tf.map_fn(filt, wavs)
+
+    wavs = complex_to_magphase(wavs)
     wavs = magphase_to_mel(config.n_mels)(wavs) 
     wavs = minmax_log_on_mel(wavs)
     wavs = tf.concat([wavs, tf.reverse(wavs, axis=[-1])], axis=0)

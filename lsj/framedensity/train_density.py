@@ -167,8 +167,8 @@ def make_dataset(config, training=True):
     return pipeline.prefetch(AUTOTUNE)
 
 
-def d_total(multiplier=10):
-    def _d_total(y_true, y_pred, apply_round=True):
+def d_total_(multiplier=10):
+    def d_total(y_true, y_pred, apply_round=True):
         y_true /= multiplier
         y_pred /= multiplier
 
@@ -185,15 +185,16 @@ def d_total(multiplier=10):
         d_dir = D_direction(d_true, d_pred)
 
         # c_cls
-        c_true = tf.reduce_sum(y_true, axis=(-3, -2))
-        c_pred = tf.reduce_sum(y_pred, axis=(-3, -2))
+        c_true = tf.reduce_sum(y_true, axis=(-3, -1))
+        c_pred = tf.reduce_sum(y_pred, axis=(-3, -1))
+        import pdb; pdb.set_trace()
         if apply_round:
             c_true = tf.math.round(c_true)
             c_pred = tf.math.round(c_pred)
         d_cls = D_class(c_true, c_pred)
 
         return 0.8 * d_dir + 0.2 * d_cls
-    return _d_total
+    return d_total
 
 
 def custom_loss(alpha=0.8, l2=1):
@@ -316,7 +317,7 @@ if __name__ == "__main__":
             model, tf.keras.regularizers.l2(config.l2))
     model.compile(optimizer=opt, 
                   loss=custom_loss(alpha=0.8, l2=config.loss_l2),
-                  metrics=[d_total(config.multiplier), cos_sim])
+                  metrics=[d_total_(config.multiplier), cos_sim])
     model.summary()
 
     if config.pretrain:

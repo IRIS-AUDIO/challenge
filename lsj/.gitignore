@@ -1,0 +1,3 @@
+/**/*.wav
+/**/*.h5
+/**/tensorboard_log/*

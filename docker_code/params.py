@@ -3,6 +3,7 @@ import argparse
 
 def getArgs(known = []):
     args = argparse.ArgumentParser()
+    args.add_argument('path', type=str)
     args.add_argument('--model', type=str, default='EfficientNetB4')
     args.add_argument('--mode', type=str, default='GRU',
                                     choices=['GRU', 'transformer'])

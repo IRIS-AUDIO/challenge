@@ -4,7 +4,7 @@ import pdb, json
 
 
 def tojson(data):
-    with open('t3_res_jiho.chang@kriss.re.kr.json', 'w') as f:
+    with open('t3_res_jiho.chang.json', 'w') as f:
         json.dump(data, f, indent='\t')
 
 def main(config):
@@ -56,10 +56,17 @@ def main(config):
     angles = tf.cast(tf.round(tf.reduce_sum(wavs, axis=(1, 2))), tf.int8)
     classes = tf.cast(tf.round(tf.reduce_sum(wavs, axis=(1, 3))), tf.int8)
 
+    # import numpy as np
+    # from glob import glob
+    # num = len(sorted(glob('dataset/3rd_track3/*.wav')))
+    # angles = tf.convert_to_tensor(np.zeros((num, 10), dtype=np.int))
+    # classes = tf.convert_to_tensor(np.ones((num, 3), dtype=np.int) * 2)
+   
     data = {
         'track3_results':list()
     }
     for idx, (ag, cl) in enumerate(zip(angles, classes)):
+        
         _data = {'id':idx,'angle':ag.numpy().tolist(), 'class':cl.numpy().tolist()}
         data['track3_results'].append(_data)
     tojson(data)

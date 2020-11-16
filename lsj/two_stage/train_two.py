@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 args = argparse.ArgumentParser()
 args.add_argument('--name', type=str, required=True)
-args.add_argument('--model', type=str, default='EfficientNetB0')
+args.add_argument('--model', type=str, default='EfficientNetB4')
 args.add_argument('--pretrain', type=bool, default=False)
 args.add_argument('--n_layers', type=int, default=0)
 args.add_argument('--n_dim', type=int, default=256)

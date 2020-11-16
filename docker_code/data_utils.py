@@ -1,16 +1,14 @@
 import pickle, torchaudio, torch
 from glob import glob
-from concurrent.futures import ProcessPoolExecutor
-
 
 def getRawData(config):
     data_path = sorted(glob(config.path + '/*.wav'))
 
     def load(path):
-        return torchaudio.load(data_path)
+        torchaudio.load(data_path)
+        return 
 
-    with ProcessPoolExecutor() as pool:
-        data = list(pool.map(load, data_path))
+    data = list(map(load, data_path))
 
     return data_path
 
@@ -39,7 +37,7 @@ def _load_wav(wav_fname: str):
 
 
 def load_wav(config):
-    wavs = sorted(glob('dataset/3rd_track3/*.wav'))
+    wavs = sorted(glob(config.path + '/*.wav'))
     import tensorflow as tf
     from transforms import magphase_to_mel, complex_to_magphase, minmax_norm_magphase
     to_mel = magphase_to_mel(config.n_mels)

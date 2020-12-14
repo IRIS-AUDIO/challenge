@@ -28,20 +28,21 @@ args.add_argument('--n_heads', type=int, default=8)
 
 # DATA
 args.add_argument('--background_sounds', type=str,
-                  default='/codes/generate_wavs/drone_normed_complex_v2.pickle')
+                  default='/codes/generate_wavs/drone_normed_complex_v3.pickle')
 args.add_argument('--voices', type=str,
-                  default='/codes/generate_wavs/voice_normed_complex.pickle')
+                  default='/codes/generate_wavs/voice_normed_complex_v3.pickle')
 args.add_argument('--labels', type=str,
-                  default='/codes/generate_wavs/voice_labels_mfc.npy')
+                  default='/codes/generate_wavs/voice_labels_mfc_v3.npy')
 args.add_argument('--noises', type=str,
-                  default='/codes/RDChallenge/tf_codes/sounds/noises_specs.pickle')
+                  default='/codes/RDChallenge/tf_codes/sounds/noises_specs_v2.pickle')
 args.add_argument('--test_background_sounds', type=str,
-                  default='/codes/generate_wavs/test_drone_normed_complex.pickle')
+                  default='/codes/generate_wavs/test_drone_normed_complex_v2.pickle')
 args.add_argument('--test_voices', type=str,
                   default='/codes/generate_wavs/test_voice_normed_complex.pickle')
 args.add_argument('--test_labels', type=str,
                   default='/codes/generate_wavs/test_voice_labels_mfc.npy')
 args.add_argument('--n_mels', type=int, default=128)
+
 
 # TRAINING
 args.add_argument('--optimizer', type=str, default='adam',

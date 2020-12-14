@@ -16,10 +16,13 @@ from transforms import *
 from utils import *
 from models import transformer_layer
 from tqdm import tqdm
+import abc
+from tensorflow.python.ops import math_ops
+from tensorflow.python.framework import ops
 
 args = argparse.ArgumentParser()
 args.add_argument('--name', type=str, required=True)
-args.add_argument('--model', type=str, default='EfficientNetB4')
+args.add_argument('--model', type=str, default='EfficientNetB0')
 args.add_argument('--pretrain', type=bool, default=False)
 args.add_argument('--n_layers', type=int, default=0)
 args.add_argument('--n_dim', type=int, default=256)
@@ -233,6 +236,25 @@ def Numbering_loss(alpha=0, l2=1):
     return _custom
 
 
+
+class CustomScheduler(tf.keras.optimizers.schedules.LearningRateSchedule):
+    def __init__(self, initial_learning_rate, d_model=4096., warmup_steps=200//12):
+        super(CustomScheduler, self).__init__()
+        self.initial_learning_rate = tf.constant(initial_learning_rate)
+        self.warmup_steps = warmup_steps
+        self.d_model = tf.math.rsqrt(d_model)
+
+    @tf.function
+    def get_lr(self, step):
+        dtype = self.initial_learning_rate.dtype
+        step = tf.cast(step+1, dtype)
+        arg1 = tf.math.rsqrt(step)
+        arg2 = tf.cast(step * (self.warmup_steps ** -1.5), dtype)
+        return tf.cast(self.d_model, dtype) * tf.math.minimum(arg1, arg2) # / 2. # TEST
+
+    def __call__(self, step):
+        return self.get_lr(step)
+
 def custom_scheduler(d_model, warmup_steps=4000):
     # will be replaced by exponential scheduler
     # https://www.tensorflow.org/tutorials/text/transformer#optimizer
@@ -278,7 +300,7 @@ def get_model(config):
     )
     out = tf.transpose(second_model.output, perm=[0, 2, 1, 3])
     out = tf.keras.layers.Reshape([-1, out.shape[-1]*out.shape[-2]])(out)
-
+    
     if config.n_layers > 0:
         out = tf.keras.layers.Dense(config.n_dim)(out)
         for i in range(config.n_layers):
@@ -481,7 +503,7 @@ if __name__ == "__main__":
     TOTAL_EPOCH = config.epochs
     BATCH_SIZE = config.batch_size
     NAME = config.name if config.name.endswith('.h5') else config.name + '.h5'
-
+    model_dir = 'model_save/' + config.name
     """ MODEL """
    
 
@@ -491,8 +513,8 @@ if __name__ == "__main__":
 
     lr = config.lr
     if config.optimizer == 'adam':
-        opt_num = Adam(lr, clipvalue=0.01) 
-        opt_do = Adam(lr, clipvalue=0.01) 
+        opt_num = Adam(CustomScheduler(lr), clipvalue=0.01) 
+        opt_do = Adam(CustomScheduler(lr), clipvalue=0.01) 
     elif config.optimizer == 'sgd':
         opt_num = SGD(lr, momentum=0.9)
         opt_do = SGD(lr, momentum=0.9)
@@ -505,8 +527,8 @@ if __name__ == "__main__":
     # model.summary()
 
     if config.pretrain:
-        first_model.load_weights(NAME[:-3]+'first' + NAME[-3:])
-        second_model.load_weights(NAME[:-3]+'second' + NAME[-3:])
+        first_model.load_weights(model_dir+'/'+config.name+'_first.h5')
+        second_model.load_weights(model_dir+'/'+config.name+'_second.h5')
         print('loaded pretrained model')
 
     """ DATA """
@@ -534,5 +556,7 @@ if __name__ == "__main__":
     #           validation_data=test_set,
     #           validation_steps=12,
     #           callbacks=callbacks)
-
-    model.save(NAME.replace('.h5', '_SWA.h5'))
+    firstNAME = model_dir+'/'+config.name+'_first.h5'
+    secondNAME = model_dir+'/'+config.name+'_second.h5'
+    first_model.save(firstNAME.replace('first.h5', 'first_SWA.h5'))
+    second_model.save(secondNAME.resplace('second.h5', 'second_SWA.h5'))

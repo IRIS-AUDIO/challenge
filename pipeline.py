@@ -7,7 +7,7 @@ def merge_complex_specs(background,
                         voices_and_labels, 
                         noises=None,
                         n_frame=300, 
-                        n_classes=30,
+                        n_classes=3,
                         t_axis=1, # time-axis
                         min_ratio=2/3,
                         min_noise_ratio=1/2,
@@ -34,16 +34,19 @@ def merge_complex_specs(background,
 
     # voices
     max_voices = tf.shape(voices)[0]
-    n_voices = tf.random.uniform([], minval=1, maxval=max_voices, dtype='int32')
+    if max_voices > 1:
+        n_voices = tf.random.uniform([], minval=1, maxval=max_voices,
+                                     dtype='int32')
+    else:
+        n_voices = 1
     label = tf.zeros(shape=[max_voices, n_frame, n_classes], dtype='float32')
     for v in range(n_voices):
         voice = voices[v]
-        l = labels[v:v+1] # shape=[1, n_classes]
-
         v_ratio = tf.math.pow(10., -tf.random.uniform([], maxval=-snr/10))
         v_frame = tf.shape(voice)[t_axis]
 
-        l = tf.tile(l, [v_frame, 1])
+        l = labels[v:v+1] # shape=[1, n_classes]
+        l = tf.tile(l, [v_frame, 1]) # [v_frame, n_classes]
         mask = tf.cast(tf.reduce_max(voice, axis=axis) > 0, tf.float32)
         l *= tf.expand_dims(mask, axis=-1)
 
@@ -70,9 +73,10 @@ def merge_complex_specs(background,
         complex_spec += v_ratio * voice
         label += l
     
-    # noise
     if noises is not None:
-        n_noises = tf.random.uniform([], maxval=tf.shape(noises)[0], dtype='int32')
+        n_noises = tf.random.uniform([], maxval=tf.shape(noises)[0],
+                                     dtype='int32')
+
         for n in range(n_noises):
             noise = noises[n]
 
@@ -92,28 +96,6 @@ def merge_complex_specs(background,
     return complex_spec, label
 
 
-def to_frame_labels(x, y):
-    """
-
-    :param x:
-    :param y: [..., n_voices, n_frames, n_classes]
-    :return: [..., n_frames, n_classes]
-    """
-    y = tf.reduce_sum(y, axis=-3)
-    y = tf.clip_by_value(y, 0, 1)
-    return x, y
-
-
-def to_class_labels(x, y):
-    '''
-    INPUT - y : [..., n_voices, n_frames, 30]
-    OUTPUT - y: [..., 30]
-    '''
-    y = tf.reduce_max(y, axis=-2) # [..., n_voices, 30]
-    y = tf.reduce_sum(y, axis=-2) # [..., 30]
-    return x, y
-
-
 def make_pipeline(backgrounds, # a list of backgrounds noises
                   voices, # a list of human voicess
                   labels, # a list of labelss of human voicess
@@ -121,7 +103,7 @@ def make_pipeline(backgrounds, # a list of backgrounds noises
                   n_frame=300, # number of frames per sample
                   max_voices=10,
                   max_noises=10,
-                  n_classes=30,
+                  n_classes=3,
                   **kwargs):
     '''
     OUTPUT

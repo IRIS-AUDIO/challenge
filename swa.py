@@ -19,7 +19,7 @@ class SWA(tf.keras.callbacks.Callback):
             self.update_swa_weights()
 
     def on_train_end(self, logs=None):
-        print("\nThe final model has been set... Please reset BN")
+        print("\nFinal Model Has Been Saved... Please Reset BN")
         self.model.set_weights(self.swa_weights)
 
     def update_swa_weights(self):
@@ -31,3 +31,4 @@ class SWA(tf.keras.callbacks.Callback):
                 for swa_w, w in zip(self.swa_weights, self.model.get_weights())]
 
         self.cnt += 1
+

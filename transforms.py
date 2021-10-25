@@ -47,11 +47,12 @@ def random_shift(specs, axis=0, width=16):
 
 
 """ MAGNITUDE-PHASE SPECTROGRAM """
-def magphase_to_mel(num_mel_bins=100, 
+def magphase_to_mel(num_mel_bins=80,
                     num_spectrogram_bins=257, 
-                    sample_rate=16000):
+                    sample_rate=16000,
+                    **kwargs):
     mel_matrix = tf.signal.linear_to_mel_weight_matrix(
-        num_mel_bins, num_spectrogram_bins, sample_rate)
+        num_mel_bins, num_spectrogram_bins, sample_rate, **kwargs)
 
     def _magphase_to_mel(x, y=None):
         '''

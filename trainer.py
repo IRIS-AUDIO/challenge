@@ -8,7 +8,6 @@ from tensorflow.keras.losses import *
 from tensorflow.keras.metrics import *
 from tensorflow.keras.optimizers import *
 
-import efficientnet.model as model
 from metrics import *
 from pipeline import *
 from swa import SWA
@@ -22,28 +21,23 @@ args.add_argument('--model', type=str, default='EfficientNetB4')
 args.add_argument('--pretrain', type=bool, default=False)
 args.add_argument('--n_layers', type=int, default=0)
 args.add_argument('--n_dim', type=int, default=256)
-args.add_argument('--n_heads', type=int, default=8)
+args.add_argument('--n_chan', type=int, default=1)
+args.add_argument('--n_classes', type=int, default=3)
 
 # DATA
-args.add_argument('--background_sounds', type=str,
-                  default='/codes/generate_wavs/drone_normed_complex_v3.pickle')
-args.add_argument('--voices', type=str,
-                  default='/codes/generate_wavs/voice_normed_complex_v3.pickle')
-args.add_argument('--labels', type=str,
-                  default='/codes/generate_wavs/voice_labels_mfc_v3.npy')
-args.add_argument('--noises', type=str,
-                  default='/codes/RDChallenge/tf_codes/sounds/noises_specs.pickle')
+args.add_argument('--background_sounds', type=str, default='dummy_specs.pickle')
+args.add_argument('--voices', type=str, default='dummy_specs.pickle')
+args.add_argument('--labels', type=str, default='dummy_labels.npy')
+args.add_argument('--noises', type=str, default='dummy_specs.pickle')
 args.add_argument('--test_background_sounds', type=str,
-                  default='/codes/generate_wavs/test_drone_normed_complex_v2.pickle')
-args.add_argument('--test_voices', type=str,
-                  default='/codes/generate_wavs/test_voice_normed_complex.pickle')
-args.add_argument('--test_labels', type=str,
-                  default='/codes/generate_wavs/test_voice_labels_mfc.npy')
-args.add_argument('--n_mels', type=int, default=128)
+                  default='dummy_specs.pickle')
+args.add_argument('--test_voices', type=str, default='dummy_specs.pickle')
+args.add_argument('--test_labels', type=str, default='dummy_labels.npy')
+args.add_argument('--n_mels', type=int, default=80)
 
 # TRAINING
-args.add_argument('--optimizer', type=str, default='adam',
-                                 choices=['adam', 'sgd', 'rmsprop'])
+args.add_argument('--optimizer', type=str, default='adabelief',
+                  choices=['adam', 'sgd', 'rmsprop', 'adabelief'])
 args.add_argument('--lr', type=float, default=1e-4)
 args.add_argument('--end_lr', type=float, default=1e-4)
 args.add_argument('--lr_power', type=float, default=0.5)
@@ -56,16 +50,18 @@ args.add_argument('--n_frame', type=int, default=2048)
 args.add_argument('--steps_per_epoch', type=int, default=100)
 args.add_argument('--l1', type=float, default=0)
 args.add_argument('--l2', type=float, default=1e-6)
+args.add_argument('--loss_alpha', type=float, default=0.8)
 args.add_argument('--loss_l2', type=float, default=1.)
 args.add_argument('--multiplier', type=float, default=10)
 
 # AUGMENTATION
 args.add_argument('--snr', type=float, default=-15)
-args.add_argument('--max_voices', type=int, default=12) # 10)
-args.add_argument('--max_noises', type=int, default=4) # 6)
+args.add_argument('--max_voices', type=int, default=10)
+args.add_argument('--max_noises', type=int, default=6)
 
 
 def minmax_log_on_mel(mel, labels=None):
+    # batch-wise pre-processing
     axis = tuple(range(1, len(mel.shape)))
 
     # MIN-MAX
@@ -81,29 +77,9 @@ def minmax_log_on_mel(mel, labels=None):
     return mel
 
 
-def random_reverse_chan(specs, labels):
-    # Assume MelSpectrogram
-    # specs: [..., freq, time, chan]
-    # labels: [..., time', 30]
-    rev_specs = tf.reverse(specs, [-1])
-    rev_labels = tf.stack(
-        tf.split(labels, 3, axis=-1), axis=-2) # [..., time', 3, 10]
-    rev_labels = tf.reverse(rev_labels, [-1])
-    rev_labels = tf.concat(
-        tf.unstack(rev_labels, axis=-2), axis=-1)
-
-    coin = tf.cast(tf.random.uniform([]) > 0.5, tf.float32)
-
-    specs = coin * specs + (1-coin) * rev_specs
-    labels = coin * labels + (1-coin) * rev_labels
-                          
-    return specs, labels
-
-
 def augment(specs, labels, time_axis=-2, freq_axis=-3):
-    specs = mask(specs, axis=time_axis, max_mask_size=16, n_mask=6) 
-    specs = mask(specs, axis=freq_axis, max_mask_size=12)
-    specs, labels = random_reverse_chan(specs, labels)
+    specs = mask(specs, axis=time_axis, max_mask_size=24, n_mask=6)
+    specs = mask(specs, axis=freq_axis, max_mask_size=16)
     return specs, labels
 
 
@@ -128,13 +104,7 @@ def to_density_labels(x, y):
     return x, y
 
 
-def magphase_to_mag(x, y=None):
-    x = x[..., :tf.shape(x)[-1] // 2] # remove phase
-    if y is None:
-        return x
-    return x, y
-
-def make_dataset(config, training=True):
+def make_dataset(config, training=True, n_classes=3):
     # Load required datasets
     if training:
         backgrounds = load_data(config.background_sounds)
@@ -144,19 +114,17 @@ def make_dataset(config, training=True):
         backgrounds = load_data(config.test_background_sounds)
         voices = load_data(config.test_voices)
         labels = load_data(config.test_labels)
-    labels = np.eye(30, dtype='float32')[labels] # to one-hot vectors
+    labels = np.eye(n_classes, dtype='float32')[labels] # to one-hot vectors
     noises = load_data(config.noises)
 
     # Make pipeline and process the pipeline
     pipeline = make_pipeline(backgrounds, 
-                             voices, labels,
-                             noises,
+                             voices, labels, noises,
                              n_frame=config.n_frame,
                              max_voices=config.max_voices,
                              max_noises=config.max_noises,
-                             n_classes=30,
+                             n_classes=n_classes,
                              snr=config.snr,
-                             # voice_map_fn=random_speedup(stddev=0.05) if training else None, # TEST (D_B4_B3)
                              min_ratio=1)
     pipeline = pipeline.map(to_density_labels)
     if training: 
@@ -164,44 +132,12 @@ def make_dataset(config, training=True):
     pipeline = pipeline.batch(config.batch_size, drop_remainder=False)
     pipeline = pipeline.map(complex_to_magphase)
     pipeline = pipeline.map(magphase_to_mel(config.n_mels))
-    # pipeline = pipeline.map(magphase_to_mag) 
     pipeline = pipeline.map(minmax_log_on_mel)
     pipeline = pipeline.map(preprocess_labels(config.multiplier))
     return pipeline.prefetch(AUTOTUNE)
 
 
-def d_total(multiplier=10):
-    def d_total(y_true, y_pred, apply_round=True):
-        y_true /= multiplier
-        y_pred /= multiplier
-
-        # [None, time, 30] -> [None, time, 3, 10]
-        y_true = tf.stack(tf.split(y_true, 3, axis=-1), axis=-2)
-        y_pred = tf.stack(tf.split(y_pred, 3, axis=-1), axis=-2)
-
-        # d_dir
-        d_true = tf.reduce_sum(y_true, axis=(-3, -2))
-        d_pred = tf.reduce_sum(y_pred, axis=(-3, -2))
-        if apply_round:
-            d_true = tf.math.round(d_true)
-            d_pred = tf.math.round(d_pred)
-        d_dir = D_direction(d_true, d_pred)
-
-        # c_cls
-        c_true = tf.reduce_sum(y_true, axis=(-3, -1))
-        c_pred = tf.reduce_sum(y_pred, axis=(-3, -1))
-        if apply_round:
-            c_true = tf.math.round(c_true)
-            c_pred = tf.math.round(c_pred)
-        d_cls = D_class(c_true, c_pred)
-
-        return 0.8 * d_dir + 0.2 * d_cls
-    return d_total
-
-
-def custom_loss(alpha=0.8, l2=1, multiplier=10):
-    total_loss = d_total(multiplier)
-
+def custom_loss(alpha=0.8, l2=1):
     def _custom(y_true, y_pred):
         # y_true, y_pred = [None, time, 30]
         # [None, time, 30] -> [None, time, 3, 10]
@@ -258,20 +194,6 @@ def cos_sim(y_true, y_pred):
         axis=-1)
 
 
-def polydecay_with_warmup(base_lr, end_lr, 
-                          decay_steps, warmup_steps,
-                          power=0.5):
-    # lr: maximum lr
-    poly_scheduler = tf.keras.optimizers.schedules.PolynomialDecay(
-        base_lr, decay_steps, end_lr, power)
-
-    def _scheduler(step):
-        arg1 = poly_scheduler(tf.maximum(0, step-warmup_steps))
-        arg2 = (step+1) * base_lr / warmup_steps
-        return tf.math.minimum(arg1, arg2)
-    return _scheduler
-
-
 def custom_scheduler(d_model, warmup_steps=4000, lr_div=2):
     # https://www.tensorflow.org/tutorials/text/transformer#optimizer
     d_model = tf.cast(d_model, tf.float32)
@@ -284,15 +206,6 @@ def custom_scheduler(d_model, warmup_steps=4000, lr_div=2):
     return _scheduler
 
 
-def random_speedup(stddev=0.1):
-    def _random_speedup(voice, label=None):
-        voice = phase_vocoder(voice, rate=tf.random.normal([], mean=1., stddev=stddev))
-        if label is None:
-            return voice
-        return voice, label
-    return _random_speedup
-
-
 if __name__ == "__main__":
     config = args.parse_args()
     print(config)
@@ -302,43 +215,40 @@ if __name__ == "__main__":
     NAME = config.name if config.name.endswith('.h5') else config.name + '.h5'
 
     """ MODEL """
-    x = tf.keras.layers.Input(shape=(config.n_mels, None, 2))
-    model = getattr(model, config.model)(
-        include_top=False,
-        weights=None,
-        input_tensor=x,
-        backend=tf.keras.backend,
-        layers=tf.keras.layers,
-        models=tf.keras.models,
-        utils=tf.keras.utils,
-    )
-    out = tf.transpose(model.output, perm=[0, 2, 1, 3])
+    input_tensor = tf.keras.layers.Input(
+        shape=(config.n_mels, config.n_frame, config.n_chan))
+    backbone = getattr(tf.keras.applications.efficientnet, config.model)(
+        include_top=False, weights=None, input_tensor=input_tensor)
+    # tf.keras.applications.efficientnet.EfficientNetB4(
+
+    out = tf.transpose(backbone.output, perm=[0, 2, 1, 3])
     out = tf.keras.layers.Reshape([-1, out.shape[-1]*out.shape[-2]])(out)
 
     for i in range(config.n_layers):
-        out = tf.keras.layers.Dropout(0.1)(out)
         out = tf.keras.layers.Dense(config.n_dim)(out)
+        out = tf.keras.layers.BatchNormalization()(out)
         out = tf.keras.layers.Activation('sigmoid')(out) * out
 
-    out = tf.keras.layers.Dropout(0.1)(out)
-    out = tf.keras.layers.Dense(30, activation='relu')(out)
-    model = tf.keras.models.Model(inputs=model.input, outputs=out)
+    out = tf.keras.layers.Dense(config.n_classes, activation='relu')(out)
+    model = tf.keras.models.Model(inputs=input_tensor, outputs=out)
 
     lr = config.lr
     if config.optimizer == 'adam':
         opt = Adam(lr, clipvalue=config.clipvalue)
     elif config.optimizer == 'sgd':
         opt = SGD(lr, momentum=0.9, clipvalue=config.clipvalue)
-    else:
+    elif config.optimizer == 'rmsprop':
         opt = RMSprop(lr, momentum=0.9, clipvalue=config.clipvalue)
+    else:
+        opt = AdaBelief(lr, clipvalue=config.clipvalue)
 
     if config.l2 > 0:
         model = apply_kernel_regularizer(
             model, tf.keras.regularizers.l1_l2(config.l1, config.l2))
     model.compile(optimizer=opt, 
-                  loss=custom_loss(alpha=0.8, l2=config.loss_l2),
-                  metrics=[d_total(config.multiplier), cos_sim])
-    model.summary()
+                  loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
+                  metrics=[cos_sim])
+    # model.summary()
 
     if config.pretrain:
         model.load_weights(NAME)
@@ -350,12 +260,9 @@ if __name__ == "__main__":
 
     """ TRAINING """
     callbacks = [
-        CSVLogger(NAME.replace('.h5', '.log'),
-                  append=True),
+        CSVLogger(NAME.replace('.h5', '.log'), append=True),
         SWA(start_epoch=TOTAL_EPOCH//2, swa_freq=2),
-        ModelCheckpoint(NAME,
-                        monitor='val_d_total', 
-                        save_best_only=True,
+        ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True,
                         verbose=1),
         TerminateOnNaN()
     ]
@@ -366,7 +273,7 @@ if __name__ == "__main__":
                 custom_scheduler(4096, TOTAL_EPOCH/12, config.lr_div)))
     else:
         callbacks.append(
-            ReduceLROnPlateau(monitor='d_total', factor=0.9, patience=5))
+            ReduceLROnPlateau(monitor='loss', factor=0.9, patience=5))
 
     model.fit(train_set,
               epochs=TOTAL_EPOCH,
@@ -377,3 +284,4 @@ if __name__ == "__main__":
               callbacks=callbacks)
 
     model.save(NAME.replace('.h5', '_SWA.h5'))
+

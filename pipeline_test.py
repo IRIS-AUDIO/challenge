@@ -41,29 +41,6 @@ class PipelineTest(tf.test.TestCase):
         self.assertEqual(spec.shape, [self.freq, n_frame, self.chan]) 
         self.assertEqual(l.shape, [n_voices, n_frame, self.n_classes]) 
 
-    def test_to_frame_labels(self):
-        n_voices = 10
-        n_frame = 30
-
-        x = None
-        y = np.random.randn(n_voices, n_frame, self.n_classes).astype('float32')
-
-        _, y_ = to_frame_labels(x, y)
-        self.assertEqual(y_.shape, [n_frame, self.n_classes])
-
-    def test_to_class_labels(self):
-        n_voices = 10
-        n_frame = 30
-
-        x = None
-        y = np.random.randn(n_voices, n_frame, self.n_classes).astype('float32')
-
-        _, y_ = to_class_labels(x, y)
-        self.assertEqual(y_.shape, [30])
-
-        _, y_ = to_class_labels(x, y[np.newaxis, :])
-        self.assertEqual(y_.shape, [1, 30])
-
     def test_make_pipeline(self):
         n_frame = 30
 

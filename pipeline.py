@@ -70,8 +70,11 @@ def merge_complex_specs(background,
         l = tf.reshape(tf.one_hot(v, max_voices, dtype='float32'), (-1, 1, 1)) \
             * tf.expand_dims(l, axis=0)
 
-        complex_spec += v_ratio * voice
-        label += l
+        no_overlap = tf.cast(tf.reduce_max(tf.reduce_sum(label+l, axis=0)) < 2,
+                             tf.float32)
+
+        complex_spec += v_ratio * voice * no_overlap
+        label += l * no_overlap
     
     if noises is not None:
         n_noises = tf.random.uniform([], maxval=tf.shape(noises)[0],

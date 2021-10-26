@@ -25,10 +25,11 @@ args.add_argument('--n_chan', type=int, default=1)
 args.add_argument('--n_classes', type=int, default=3)
 
 # DATA
-args.add_argument('--background_sounds', type=str, default='dummy_specs.pickle')
-args.add_argument('--voices', type=str, default='dummy_specs.pickle')
-args.add_argument('--labels', type=str, default='dummy_labels.npy')
-args.add_argument('--noises', type=str, default='dummy_specs.pickle')
+args.add_argument('--abspath', type=str, default='/root/datasets/Interspeech2020/generate_wavs/codes')
+args.add_argument('--background_sounds', type=str, default='drone_normed_complex_v3.pickle')
+args.add_argument('--voices', type=str, default='voice_normed_complex_v3.pickle')
+args.add_argument('--labels', type=str, default='voice_labels_mfc_v3.npy')
+args.add_argument('--noises', type=str, default='noises_specs_v2.pickle')
 args.add_argument('--test_background_sounds', type=str,
                   default='dummy_specs.pickle')
 args.add_argument('--test_voices', type=str, default='dummy_specs.pickle')
@@ -106,16 +107,20 @@ def to_density_labels(x, y):
 
 def make_dataset(config, training=True, n_classes=3):
     # Load required datasets
+    if not os.path.exists(config.abspath):
+        config.abspath = ''
     if training:
-        backgrounds = load_data(config.background_sounds)
-        voices = load_data(config.voices)
-        labels = load_data(config.labels)
+        backgrounds = load_data(os.path.join(config.abspath, config.background_sounds))
+        voices = load_data(os.path.join(config.abspath, config.voices))
+        labels = load_data(os.path.join(config.abspath, config.labels))
     else:
-        backgrounds = load_data(config.test_background_sounds)
-        voices = load_data(config.test_voices)
-        labels = load_data(config.test_labels)
+        backgrounds = load_data(os.path.join(config.abspath, config.test_background_sounds))
+        voices = load_data(os.path.join(config.abspath, config.test_voices))
+        labels = load_data(os.path.join(config.abspath, config.test_labels))
+    if labels.max() - 1 != config.n_classes:
+        labels //= 10
     labels = np.eye(n_classes, dtype='float32')[labels] # to one-hot vectors
-    noises = load_data(config.noises)
+    noises = load_data(os.path.join(config.abspath, config.noises))
 
     # Make pipeline and process the pipeline
     pipeline = make_pipeline(backgrounds, 
@@ -257,7 +262,8 @@ if __name__ == "__main__":
     """ DATA """
     train_set = make_dataset(config, training=True)
     test_set = make_dataset(config, training=False)
-
+    x, y = [(i,j) for i,j in train_set.take(1)][0]
+    import pdb; pdb.set_trace()
     """ TRAINING """
     callbacks = [
         CSVLogger(NAME.replace('.h5', '.log'), append=True),

@@ -25,7 +25,7 @@ args.add_argument('--n_chan', type=int, default=1)
 args.add_argument('--n_classes', type=int, default=3)
 
 # DATA
-args.add_argument('--abspath', type=str, default='/root/datasets/Interspeech2020/generate_wavs/codes')
+args.add_argument('--datapath', type=str, default='/root/datasets/Interspeech2020/generate_wavs/codes')
 args.add_argument('--background_sounds', type=str, default='drone_normed_complex_v3.pickle')
 args.add_argument('--voices', type=str, default='voice_normed_complex_v3.pickle')
 args.add_argument('--labels', type=str, default='voice_labels_mfc_v3.npy')
@@ -107,20 +107,20 @@ def to_density_labels(x, y):
 
 def make_dataset(config, training=True, n_classes=3):
     # Load required datasets
-    if not os.path.exists(config.abspath):
-        config.abspath = ''
+    if not os.path.exists(config.datapath):
+       config.datapath = ''
     if training:
-        backgrounds = load_data(os.path.join(config.abspath, config.background_sounds))
-        voices = load_data(os.path.join(config.abspath, config.voices))
-        labels = load_data(os.path.join(config.abspath, config.labels))
+        backgrounds = load_data(os.path.join(config.datapath, config.background_sounds))
+        voices = load_data(os.path.join(config.datapath, config.voices))
+        labels = load_data(os.path.join(config.datapath, config.labels))
     else:
-        backgrounds = load_data(os.path.join(config.abspath, config.test_background_sounds))
-        voices = load_data(os.path.join(config.abspath, config.test_voices))
-        labels = load_data(os.path.join(config.abspath, config.test_labels))
+        backgrounds = load_data(os.path.join(config.datapath, config.test_background_sounds))
+        voices = load_data(os.path.join(config.datapath, config.test_voices))
+        labels = load_data(os.path.join(config.datapath, config.test_labels))
     if labels.max() - 1 != config.n_classes:
         labels //= 10
     labels = np.eye(n_classes, dtype='float32')[labels] # to one-hot vectors
-    noises = load_data(os.path.join(config.abspath, config.noises))
+    noises = load_data(os.path.join(config.datapath, config.noises))
 
     # Make pipeline and process the pipeline
     pipeline = make_pipeline(backgrounds, 

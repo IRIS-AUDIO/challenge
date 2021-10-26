@@ -224,7 +224,6 @@ if __name__ == "__main__":
         shape=(config.n_mels, config.n_frame, config.n_chan))
     backbone = getattr(tf.keras.applications.efficientnet, config.model)(
         include_top=False, weights=None, input_tensor=input_tensor)
-    # tf.keras.applications.efficientnet.EfficientNetB4(
 
     out = tf.transpose(backbone.output, perm=[0, 2, 1, 3])
     out = tf.keras.layers.Reshape([-1, out.shape[-1]*out.shape[-2]])(out)

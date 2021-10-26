@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 import json
 
+
 # label for metric (Class, Start, End)
 # predict(Class, Time)
 def get_er(predict, gt):
@@ -26,10 +27,9 @@ def get_er(predict, gt):
         else:
             I += len(temp_list)-1 # else item are all 
     I += reverse_I # case for wrong insertion 
-
     return (S + D + I) / N
 
 if __name__ == '__main__':
     gt = [[0, 10, 20],  [2, 45, 64], [1, 25, 32]]
-    predict = [[0,15], [1,16], [2, 22], [1, 34], [1,44], [2, 65]]
-    print(get_er(predict, gt))
+    predict = [[1,15], [1,16], [2, 22], [2,47], [1, 34], [1,44], [2, 65]]
+    print(get_er(predict, gt) == 1) # S=1, D =2, I=4, N=7

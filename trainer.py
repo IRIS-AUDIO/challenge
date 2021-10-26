@@ -262,8 +262,7 @@ if __name__ == "__main__":
     """ DATA """
     train_set = make_dataset(config, training=True)
     test_set = make_dataset(config, training=False)
-    x, y = [(i,j) for i,j in train_set.take(1)][0]
-    import pdb; pdb.set_trace()
+    
     """ TRAINING """
     callbacks = [
         CSVLogger(NAME.replace('.h5', '.log'), append=True),

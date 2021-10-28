@@ -5,7 +5,7 @@ import json
 
 # label for metric (Class, Start, End)
 # predict(Class, Time)
-def get_er(predict, gt):
+def get_er(gt, predict):
     predict.sort(key = lambda x:x[1])
     gt.sort(key = lambda x:x[1])
     N = len(predict) + len(gt)

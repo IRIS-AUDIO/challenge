@@ -1,7 +1,9 @@
 import argparse
+from markdown.extensions.attr_list import get_attrs
 import numpy as np
 import os
 import tensorflow as tf
+import tensorflow_addons as tfa
 from tensorflow.keras.callbacks import *
 from tensorflow.keras.losses import *
 from tensorflow.keras.metrics import *
@@ -16,6 +18,7 @@ from utils import *
 
 args = argparse.ArgumentParser()
 args.add_argument('--name', type=str, required=True)
+args.add_argument('--gpus', type=str, default='-1')
 args.add_argument('--model', type=str, default='EfficientNetB0')
 args.add_argument('--pretrain', type=bool, default=False)
 args.add_argument('--n_layers', type=int, default=0)
@@ -38,14 +41,14 @@ args.add_argument('--n_mels', type=int, default=80)
 # TRAINING
 args.add_argument('--optimizer', type=str, default='adam',
                   choices=['adam', 'sgd', 'rmsprop', 'adabelief'])
-args.add_argument('--lr', type=float, default=4e-4)
-args.add_argument('--end_lr', type=float, default=4e-4)
+args.add_argument('--lr', type=float, default=1e-3)
+args.add_argument('--end_lr', type=float, default=1e-3)
 args.add_argument('--lr_power', type=float, default=0.5)
 args.add_argument('--lr_div', type=float, default=2)
 args.add_argument('--clipvalue', type=float, default=0.01)
 
 args.add_argument('--epochs', type=int, default=500)
-args.add_argument('--batch_size', type=int, default=48)
+args.add_argument('--batch_size', type=int, default=64)
 args.add_argument('--n_frame', type=int, default=2048)
 args.add_argument('--steps_per_epoch', type=int, default=100)
 args.add_argument('--l1', type=float, default=0)
@@ -177,6 +180,28 @@ def custom_loss(alpha=0.8, l2=1):
     return _custom
 
 
+def f1_score(class_name):
+    f1 = tfa.metrics.F1Score(num_classes=2, threshold=0.5, average='micro')
+    def f1_man(y_true, y_pred):
+        # y_true (batch, frame)
+        y_true = tf.one_hot(tf.cast(y_true[...,0], tf.int32), 2)
+        y_pred = tf.one_hot(tf.cast(y_pred[...,0] > 0.5, tf.int32), 2)
+        return f1(y_true, y_pred)
+    
+    def f1_woman(y_true, y_pred):
+        # y_true (batch, frame)
+        y_true = tf.one_hot(tf.cast(y_true[...,1], tf.int32), 2)
+        y_pred = tf.one_hot(tf.cast(y_pred[...,1] > 0.5, tf.int32), 2)
+        return f1(y_true, y_pred)
+
+    def f1_kid(y_true, y_pred):
+        # y_true (batch, frame)
+        y_true = tf.one_hot(tf.cast(y_true[...,2], tf.int32), 2)
+        y_pred = tf.one_hot(tf.cast(y_pred[...,2] > 0.5, tf.int32), 2)
+        return f1(y_true, y_pred)
+    return get_attrs(f'f1_{class_name}')
+
+
 def cos_sim(y_true, y_pred):
     mask = tf.cast(
         tf.reduce_sum(y_true, axis=-2) > 0., tf.float32) # [None, 30]
@@ -200,6 +225,7 @@ def custom_scheduler(d_model, warmup_steps=4000, lr_div=2):
 
 if __name__ == "__main__":
     config = args.parse_args()
+    os.environ['CUDA_VISIBLE_DEVICES'] = config.gpus
     print(config)
 
     TOTAL_EPOCH = config.epochs
@@ -220,9 +246,12 @@ if __name__ == "__main__":
         out = tf.keras.layers.BatchNormalization()(out)
         out = tf.keras.layers.Activation('sigmoid')(out) * out
 
-    out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
+    # v1 -------------------------
+    # out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
     out = tf.keras.layers.Conv1D(input_tensor.shape[-2], 1, use_bias=False, data_format='channels_first')(out)
-    # out = tf.keras.layers.Dense(config.n_classes, activation='relu')(out)
+    out = tf.keras.layers.Activation('relu')(out)
+    out = tf.keras.layers.Dense(config.n_classes)(out)
+    # out= tf.keras.layers.Activation('relu')(out)
     # out *= tf.cast(out < 1., out.dtype)
     out = tf.keras.layers.Activation('sigmoid')(out)
     model = tf.keras.models.Model(inputs=input_tensor, outputs=out)
@@ -243,7 +272,7 @@ if __name__ == "__main__":
     model.compile(optimizer=opt, 
                 #   loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
                   loss=tf.keras.losses.BinaryCrossentropy(),
-                  metrics=[cos_sim])
+                  metrics=[cos_sim, f1_score('man'), f1_score('woman'), f1_score('kid')])
     model.summary()
 
     if config.pretrain:

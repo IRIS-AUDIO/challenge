@@ -83,9 +83,9 @@ class Challenge_Metric:
             elif ts == 2:
                 arr.write(arr.size(), tmp.gather(tf.range(ts)))
         return self.arr0.stack(), self.arr1.stack(), self.arr2.stack()
-        
 
     def gather_and_error(self, y_true, y_pred):
         # y_true : (batch, frame, classes)
         y_true_array = tf.map_fn(self.get_start_end_time, y_true)
         pass
+

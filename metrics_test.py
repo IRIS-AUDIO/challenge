@@ -10,7 +10,7 @@ class MetricsTest(tf.test.TestCase):
         self.predict = [[1, 5], [1, 19], [2, 32], [2, 38], [0, 38]]
 
     def test_get_er(self):
-        self.assertEqual(1.2, get_er(self.predict, self.gt))
+        self.assertEqual(1.2, get_er(self.gt, self.predict))
 
 
 if __name__ == '__main__':

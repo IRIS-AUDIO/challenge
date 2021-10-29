@@ -24,6 +24,18 @@ def get_er(gt, predict):
             predict.remove(temp)
     return (N - answer) / pred_N
     
+def output_to_metric(cls0, cls1, cls2):
+    answer_list = []
+    for item in cls0:
+        answer_list.append(['0', item[0].cpu().numpy(), item[1].cpu().numpy()])
+
+    for item in cls1:
+        answer_list.append(['1', item[0].cpu().numpy(), item[1].cpu().numpy()])
+
+    for item in cls2:
+        answer_list.append(['2', item[0].cpu().numpy(), item[1].cpu().numpy()])
+
+    return answer_list
 
 class Challenge_Metric:
     def __init__(self, sr=16000, hop=256) -> None:
@@ -87,6 +99,16 @@ class Challenge_Metric:
             elif ts == 2:
                 arr.write(arr.size(), tmp.gather(tf.range(ts))).mark_used()
         return self.arr0.stack(), self.arr1.stack(), self.arr2.stack()
+
+    def get_second_answer(self, data):
+        data_second = np.asarray([self.hop*i//self.sr for i in range(len(data))])
+        second_true = np.zeros([np.max(data_second), 3])
+        for i in range(np.max(data_second)):
+            second_true[i, 0] = (tf.reduce_mean(data[:, 0][data_second == i]) > 0.2)
+            second_true[i, 1] = (tf.reduce_mean(data[:, 1][data_second == i]) > 0.2)
+            second_true[i, 2] = (tf.reduce_mean(data[:, 2][data_second == i]) > 0.2)
+        cls0, cls1, cls2 = self.get_start_end_frame(second_true)
+        return cls0, cls1, cls2
 
     def reset_state(self):
         self.arr0 = tf.TensorArray(tf.int64, size=0, dynamic_size=True, clear_after_read=False)

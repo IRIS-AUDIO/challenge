@@ -1,12 +1,13 @@
 from glob import glob
 import tensorflow as tf
+import json
 
 from data_utils import load_wav
 from transforms import *
 from utils import *
 
 from sj_train import get_model, ARGS
-from metrics import Challenge_Metric
+from metrics import Challenge_Metric, get_er, output_to_metric
 
 
 def minmax_log_on_mel(mel, labels=None):
@@ -33,6 +34,10 @@ if __name__ == "__main__":
     model = get_model(config)
     metric = Challenge_Metric()
     model.load_weights(f'{config.name}.h5')
+    
+    with open('sample_answer.json') as f:
+        answer_gt = json.load(f)
+    answer_gt = answer_gt['task2_answer']
 
     for path in sorted(glob('*.wav')):
         inputs = load_wav(path)
@@ -52,6 +57,9 @@ if __name__ == "__main__":
         preds /= total_counts
         preds = tf.transpose(preds, [1, 0])
 
+        # preds = tf.round(preds)
+        # cls0, cls1, cls2 = metric.get_second_answer(preds)
+
         # smoothing
         smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5초 길이의 kernel
         preds = tf.signal.frame(preds, smoothing_kernel_size, 1, pad_end=True, axis=-2)
@@ -59,7 +67,11 @@ if __name__ == "__main__":
 
         preds = tf.cast(preds >= 0.5, tf.float32)
         cls0, cls1, cls2 = metric.get_start_end_time(preds)
+        answer_predict = output_to_metric(cls0, cls1, cls2)
 
+        answer_gt_temp = answer_gt[os.path.basename(path)[:-4]]
+        er = get_er(answer_gt_temp, answer_predict)
+        print(f'{path}:{er}')
         for i in cls0:
             time = tf.reduce_mean(tf.cast(i, tf.float32))
             print(f'class man: ({time//60} : {time%60})')

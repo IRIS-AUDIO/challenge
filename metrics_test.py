@@ -24,6 +24,10 @@ class MetricsTest(tf.test.TestCase):
         self.assertEqual(tf.reduce_sum(tf.cast(res1 != cls1, tf.float32)), 0)
         self.assertEqual(tf.reduce_sum(tf.cast(res2 != cls2, tf.float32)), 0)
 
+    def test_second_answer(self):
+        data = tf.random.uniform([450, 3])
+        answer = self.metric.get_second_answer(data)
+
 
 if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'

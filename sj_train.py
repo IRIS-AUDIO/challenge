@@ -266,7 +266,6 @@ if __name__ == "__main__":
                             f'batch{config.batch_size}', f'opt_{config.optimizer}', 
                             f'mel{config.n_mels}', f'chan{config.n_chan}'])
     NAME = NAME if NAME.endswith('.h5') else NAME + '.h5'
-
     """ MODEL """
     model = get_model(config)
 

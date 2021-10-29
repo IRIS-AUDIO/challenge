@@ -6,36 +6,42 @@ import json
 # label for metric (Class, Start, End)
 # predict(Class, Time)
 def get_er(gt, predict):
-    predict.sort(key = lambda x:x[1])
-    gt.sort(key = lambda x:x[1])
-    N = len(predict) + len(gt)
-    pred_N = len(predict)
+    predict_2 = tf.identity(predict)
+    predict_2 = tf.gather(predict_2, tf.argsort(predict_2[:,1]))
+    gt = tf.gather(gt, tf.argsort(gt[:,1]))
+    N = len(predict_2) + len(gt)
+    pred_N = len(predict_2)
     answer = 0
     for gt_item in gt:
         remove = False
-        for i, pred_item in enumerate(predict):
+        for i, pred_item in enumerate(predict_2):
             if (gt_item[1] <= pred_item[1]) and (pred_item[1] <= gt_item[2]):
                 if gt_item[0] == pred_item[0]:
                     answer += 2 
-                    temp = pred_item
+                    temp = i
                     remove = True
                     break
         if remove:
-            predict.remove(temp)
+            predict_2 = tf.concat((predict_2[:i,:], predict_2[i+1:, :]), axis=0)
     return (N - answer) / pred_N
     
 def output_to_metric(cls0, cls1, cls2):
-    answer_list = []
+    answer_list = tf.cast(tf.zeros([0,3]), tf.int32)
+
     for item in cls0:
-        answer_list.append(['0', item[0].cpu().numpy(), item[1].cpu().numpy()])
+        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(0), item[0], item[1]]), axis=0)
+        answer_list = tf.concat([answer_list, new_item], axis=0)
 
     for item in cls1:
-        answer_list.append(['1', item[0].cpu().numpy(), item[1].cpu().numpy()])
+        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(1), item[0], item[1]]), axis=0)
+        answer_list = tf.concat([answer_list, new_item], axis=0)
 
     for item in cls2:
-        answer_list.append(['2', item[0].cpu().numpy(), item[1].cpu().numpy()])
+        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(2), item[0], item[1]]), axis=0)
+        answer_list = tf.concat([answer_list, new_item], axis=0)
 
     return answer_list
+
 
 class Challenge_Metric:
     def __init__(self, sr=16000, hop=256) -> None:
@@ -104,10 +110,13 @@ class Challenge_Metric:
         data_second = np.asarray([self.hop*i//self.sr for i in range(len(data))])
         second_true = np.zeros([np.max(data_second), 3])
         for i in range(np.max(data_second)):
-            second_true[i, 0] = (tf.reduce_mean(data[:, 0][data_second == i]) > 0.2)
-            second_true[i, 1] = (tf.reduce_mean(data[:, 1][data_second == i]) > 0.2)
-            second_true[i, 2] = (tf.reduce_mean(data[:, 2][data_second == i]) > 0.2)
+            second_true[i, 0] = (tf.reduce_mean(data[:, 0][data_second == i]) > 0.5)
+            second_true[i, 1] = (tf.reduce_mean(data[:, 1][data_second == i]) > 0.5)
+            second_true[i, 2] = (tf.reduce_mean(data[:, 2][data_second == i]) > 0.5)
         cls0, cls1, cls2 = self.get_start_end_frame(second_true)
+        cls0 = tf.cast(cls0, dtype=tf.int32)
+        cls1 = tf.cast(cls1, dtype=tf.int32)
+        cls2 = tf.cast(cls2, dtype=tf.int32)
         return cls0, cls1, cls2
 
     def reset_state(self):

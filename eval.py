@@ -67,11 +67,11 @@ if __name__ == "__main__":
 
         preds = tf.cast(preds >= 0.5, tf.float32)
         cls0, cls1, cls2 = metric.get_start_end_time(preds)
+        answer_gt_temp = tf.convert_to_tensor(answer_gt[os.path.basename(path)[:-4]])
         answer_predict = output_to_metric(cls0, cls1, cls2)
-
-        answer_gt_temp = answer_gt[os.path.basename(path)[:-4]]
         er = get_er(answer_gt_temp, answer_predict)
         print(f'{path}:{er}')
+        
         for i in cls0:
             time = tf.reduce_mean(tf.cast(i, tf.float32))
             print(f'class man: ({time//60} : {time%60})')

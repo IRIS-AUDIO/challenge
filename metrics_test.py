@@ -6,8 +6,8 @@ from metrics import *
 
 class MetricsTest(tf.test.TestCase):
     def setUp(self):
-        self.gt = [[0, 0, 10], [2, 0, 20], [1, 15, 30], [2, 31, 40], [1, 27, 32]]
-        self.predict = [[1, 5], [1, 19], [2, 32], [2, 38], [0, 38]]
+        self.gt = tf.convert_to_tensor([[0, 0, 10], [2, 0, 20], [1, 15, 30], [2, 31, 40], [1, 27, 32]])
+        self.predict = tf.convert_to_tensor([[1, 5], [1, 19], [2, 32], [2, 38], [0, 38]])
         self.metric = Challenge_Metric()
 
     def test_get_er(self):

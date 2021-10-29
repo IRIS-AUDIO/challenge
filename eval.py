@@ -60,14 +60,16 @@ if __name__ == "__main__":
         preds = tf.cast(preds >= 0.5, tf.float32)
         cls0, cls1, cls2 = metric.get_start_end_time(preds)
 
+        print()
+        print(path)
         for i in cls0:
             time = tf.reduce_mean(tf.cast(i, tf.float32))
-            print(f'class man: ({time//60} : {time%60})')
+            print(f'class man: ({int(time//60)} : {int(time%60)})')
         for i in cls1:
             time = tf.reduce_mean(tf.cast(i, tf.float32))
-            print(f'class woman: ({time//60} : {time%60})')
+            print(f'class woman: ({int(time//60)} : {int(time%60)})')
         for i in cls2:
             time = tf.reduce_mean(tf.cast(i, tf.float32))
-            print(f'class kid: ({time//60} : {time%60})')
+            print(f'class kid: ({int(time//60)} : {int(time%60)})')
         metric.reset_state()
 

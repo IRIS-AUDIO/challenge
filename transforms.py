@@ -1,10 +1,11 @@
 import numpy as np
 import tensorflow as tf
+from math import log, e
 
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 EPSILON = 1e-8
-LOG_EPSILON = tf.math.log(EPSILON)
+LOG_EPSILON = log(EPSILON) / log(e)
 
 
 """ FEATURE INDEPENDENT AUGMENTATIONS """

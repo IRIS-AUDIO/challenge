@@ -103,6 +103,12 @@ def mono_chan(x, y):
     return x[..., :1], y
 
 
+def label_downsample(x, y):
+    y = tf.keras.layers.AveragePooling1D(32, 32)(y)
+    y = tf.cast(y >= 0.5, y.dtype)
+    return x, y
+
+
 def make_dataset(config, training=True, n_classes=3):
     # Load required datasets
     if not os.path.exists(config.datapath):
@@ -138,6 +144,8 @@ def make_dataset(config, training=True, n_classes=3):
     pipeline = pipeline.map(minmax_log_on_mel)
     if config.n_chan == 1:
         pipeline = pipeline.map(mono_chan)
+    if config.v == 3:
+        pipeline = pipeline.map(label_downsample)
     return pipeline.prefetch(AUTOTUNE)
 
 
@@ -244,6 +252,8 @@ def get_model(config):
         out = tf.keras.layers.Conv1DTranspose(32, 2, 2)(out)
         out = tf.keras.layers.Conv1DTranspose(16, 2, 2)(out)
         out = tf.keras.layers.Conv1DTranspose(3, 2, 2)(out)
+    elif config.v == 3:
+        out = out
     else:
         raise ValueError('wrong version')
     
@@ -288,6 +298,7 @@ if __name__ == "__main__":
                            cos_sim,
                            tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro')])
     model.summary()
+    print(NAME)
 
     if config.pretrain:
         model.load_weights(NAME)
@@ -300,7 +311,7 @@ if __name__ == "__main__":
     """ TRAINING """
     callbacks = [
         CSVLogger(NAME.replace('.h5', '.csv'), append=True),
-        SWA(start_epoch=TOTAL_EPOCH//2, swa_freq=2),
+        SWA(start_epoch=TOTAL_EPOCH//4, swa_freq=2),
         ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True,
                         verbose=1),
         TerminateOnNaN(),
@@ -314,7 +325,7 @@ if __name__ == "__main__":
                 custom_scheduler(4096, TOTAL_EPOCH/12, config.lr_div)))
     else:
         callbacks.append(
-            ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1))
+            ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
 
     model.fit(train_set,
               epochs=TOTAL_EPOCH,

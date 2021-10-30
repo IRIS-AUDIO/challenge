@@ -23,7 +23,7 @@ def get_er(gt, predict):
                     break
         if remove:
             predict_2 = tf.concat((predict_2[:i,:], predict_2[i+1:, :]), axis=0)
-    return (N - answer) / pred_N
+    return (N - answer) / len(gt)
     
 def output_to_metric(cls0, cls1, cls2):
     answer_list = tf.cast(tf.zeros([0,2]), tf.int32)

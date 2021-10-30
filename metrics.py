@@ -26,18 +26,18 @@ def get_er(gt, predict):
     return (N - answer) / pred_N
     
 def output_to_metric(cls0, cls1, cls2):
-    answer_list = tf.cast(tf.zeros([0,3]), tf.int32)
+    answer_list = tf.cast(tf.zeros([0,2]), tf.int32)
 
     for item in cls0:
-        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(0), item[0], item[1]]), axis=0)
+        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(0), (item[0] + item[1])/2]), axis=0)
         answer_list = tf.concat([answer_list, new_item], axis=0)
 
     for item in cls1:
-        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(1), item[0], item[1]]), axis=0)
+        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(1), (item[0] + item[1])/2]), axis=0)
         answer_list = tf.concat([answer_list, new_item], axis=0)
 
     for item in cls2:
-        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(2), item[0], item[1]]), axis=0)
+        new_item = tf.expand_dims(tf.convert_to_tensor([tf.convert_to_tensor(2), (item[0] + item[1])/2]), axis=0)
         answer_list = tf.concat([answer_list, new_item], axis=0)
 
     return answer_list

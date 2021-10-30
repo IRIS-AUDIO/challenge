@@ -6,7 +6,7 @@ from data_utils import load_wav
 from transforms import *
 from utils import *
 
-from sj_train import get_model, ARGS
+from sj_train import get_model, ARGS, stereo_mono
 from metrics import Challenge_Metric, get_er, output_to_metric
 
 
@@ -46,9 +46,12 @@ if __name__ == "__main__":
     with open('sample_answer.json') as f:
         answer_gt = json.load(f)
     answer_gt = answer_gt['task2_answer']
+    final_score = []
 
     for path in sorted(glob('*.wav')):
         inputs = load_wav(path)
+        if config.n_chan == 3:
+            inputs = stereo_mono(inputs)
         inputs = complex_to_magphase(inputs)
         inputs = magphase_to_mel(config.n_mels)(inputs)
         inputs = minmax_log_on_mel(inputs)
@@ -58,7 +61,11 @@ if __name__ == "__main__":
         inputs = tf.signal.frame(inputs, config.n_frame, overlap_hop, pad_end=True, axis=-2)
         inputs = tf.transpose(inputs, (1, 0, 2, 3))
         preds = model.predict(inputs[..., :config.n_chan]) # [batch, time, class]
-
+        
+        if config.v == 3:
+            resolution = config.n_frame / preds.shape[-2]
+            preds = tf.keras.layers.UpSampling1D(resolution)(preds)
+            
         preds = tf.transpose(preds, [2, 0, 1])
         total_counts = tf.signal.overlap_and_add(tf.ones_like(preds), overlap_hop)[..., :frame_len]
         preds = tf.signal.overlap_and_add(preds, overlap_hop)[..., :frame_len]
@@ -70,14 +77,14 @@ if __name__ == "__main__":
 
         # smoothing
         smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5초 길이의 kernel
-        preds = tf.signal.frame(preds, smoothing_kernel_size, 1, pad_end=True, axis=-2)
-        preds = tf.reduce_mean(preds, -2)
-
+        preds = tf.keras.layers.AveragePooling1D(smoothing_kernel_size, 1, padding='same')(preds[tf.newaxis, ...])[0]
+        
         preds = tf.cast(preds >= 0.5, tf.float32)
         cls0, cls1, cls2 = metric.get_start_end_time(preds)
         answer_gt_temp = tf.convert_to_tensor(answer_gt[os.path.basename(path)[:-4]])
         answer_predict = output_to_metric(cls0, cls1, cls2)
         er = get_er(answer_gt_temp, answer_predict)
+        final_score.append(er)
 
         print()
         print(f'{path}:{er}')
@@ -91,4 +98,5 @@ if __name__ == "__main__":
             time = tf.reduce_mean(tf.cast(i, tf.float32))
             print(f'class kid: ({int(time//60)} : {int(time%60)})')
         metric.reset_state()
+    print('FINAL SCORE:', np.mean(final_score))
 

@@ -28,7 +28,15 @@ def minmax_log_on_mel(mel, labels=None):
 
 
 if __name__ == "__main__":
-    config = ARGS().get()
+    config = ARGS()
+    config.args.add_argument('--p', help='parsing name', action='store_true')
+    config = config.get()
+    if config.p:
+        parsed_name = config.name.split('_')
+        config.model = int(parsed_name[0][-1])
+        config.v = int(parsed_name[1][-1])
+        config.n_mels = int(parsed_name[6][3:])
+        config.n_chan = int(parsed_name[7][-1])
     os.environ['CUDA_VISIBLE_DEVICES'] = config.gpus
 
     model = get_model(config)
@@ -49,7 +57,7 @@ if __name__ == "__main__":
 
         inputs = tf.signal.frame(inputs, config.n_frame, overlap_hop, pad_end=True, axis=-2)
         inputs = tf.transpose(inputs, (1, 0, 2, 3))
-        preds = model.predict(inputs[..., :1]) # [batch, time, class]
+        preds = model.predict(inputs[..., :config.n_chan]) # [batch, time, class]
 
         preds = tf.transpose(preds, [2, 0, 1])
         total_counts = tf.signal.overlap_and_add(tf.ones_like(preds), overlap_hop)[..., :frame_len]

@@ -2,6 +2,14 @@
 import tensorflow as tf
 
 
+class NO_SWA_ERROR(Exception):
+    def __init__(self, msg="Didn't use SWA") -> None:
+        self.msg = msg
+
+    def __str__(self) -> str:
+        return self.msg
+
+
 class SWA(tf.keras.callbacks.Callback):
     def __init__(self, start_epoch, swa_freq=1, verbose=True):
         super(SWA, self).__init__()
@@ -20,8 +28,11 @@ class SWA(tf.keras.callbacks.Callback):
 
     def on_train_end(self, logs=None):
         print("\nFinal Model Has Been Saved... Please Reset BN")
-        self.model.set_weights(self.swa_weights)
-
+        try:
+            self.model.set_weights(self.swa_weights)
+        except TypeError:
+            raise NO_SWA_ERROR()
+        
     def update_swa_weights(self):
         if self.swa_weights is None:
             self.swa_weights = self.model.get_weights()

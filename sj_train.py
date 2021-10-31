@@ -10,7 +10,7 @@ from tensorflow.keras.optimizers import *
 
 from metrics import *
 from pipeline import *
-from swa import SWA
+from swa import SWA, NO_SWA_ERROR
 from transforms import *
 from utils import *
 
@@ -58,6 +58,7 @@ class ARGS:
         self.args.add_argument('--loss_alpha', type=float, default=0.8)
         self.args.add_argument('--loss_l2', type=float, default=1.)
         self.args.add_argument('--multiplier', type=float, default=10)
+        self.args.add_argument('--loss', type=str, default='FOCAL')
 
         # AUGMENTATION
         self.args.add_argument('--snr', type=float, default=-15)
@@ -66,6 +67,7 @@ class ARGS:
 
     def get(self):
         return self.args.parse_args()
+
 
 def minmax_log_on_mel(mel, labels=None):
     # batch-wise pre-processing
@@ -103,6 +105,18 @@ def mono_chan(x, y):
     return x[..., :1], y
 
 
+def stereo_mono(x, y=None):
+    if y is None:
+        return tf.concat([x[..., :2], x[..., :1] + x[..., 1:2], x[..., 2:4], x[..., 2:3] + x[..., 3:4]], -1)
+    return tf.concat([x[..., :2], x[..., :1] + x[..., 1:2], x[..., 2:4], x[..., 2:3] + x[..., 3:4]], -1), y
+
+
+def label_downsample(x, y):
+    y = tf.keras.layers.AveragePooling1D(32, 32)(y)
+    y = tf.cast(y >= 0.5, y.dtype)
+    return x, y
+
+
 def make_dataset(config, training=True, n_classes=3):
     # Load required datasets
     if not os.path.exists(config.datapath):
@@ -132,12 +146,16 @@ def make_dataset(config, training=True, n_classes=3):
     pipeline = pipeline.map(to_frame_labels)
     if training: 
         pipeline = pipeline.map(augment)
+    if config.n_chan == 1:
+        pipeline = pipeline.map(mono_chan)
+    elif config.n_chan == 3:
+        pipeline = pipeline.map(stereo_mono)
     pipeline = pipeline.batch(config.batch_size, drop_remainder=False)
     pipeline = pipeline.map(complex_to_magphase)
     pipeline = pipeline.map(magphase_to_mel(config.n_mels))
     pipeline = pipeline.map(minmax_log_on_mel)
-    if config.n_chan == 1:
-        pipeline = pipeline.map(mono_chan)
+    if config.v == 3:
+        pipeline = pipeline.map(label_downsample)
     return pipeline.prefetch(AUTOTUNE)
 
 
@@ -244,6 +262,10 @@ def get_model(config):
         out = tf.keras.layers.Conv1DTranspose(32, 2, 2)(out)
         out = tf.keras.layers.Conv1DTranspose(16, 2, 2)(out)
         out = tf.keras.layers.Conv1DTranspose(3, 2, 2)(out)
+    elif config.v == 3:
+        out = out
+    elif config.v == 4:
+        out = tf.keras.layers.Conv1D(config.n_frame, 1, use_bias=False, data_format='channels_first')(out)
     else:
         raise ValueError('wrong version')
     
@@ -254,9 +276,10 @@ def get_model(config):
     return tf.keras.models.Model(inputs=input_tensor, outputs=out)
 
 
-if __name__ == "__main__":
+def main():
     config = ARGS().get()
     os.environ['CUDA_VISIBLE_DEVICES'] = config.gpus
+    config.loss = config.loss.upper()
     print(config)
 
     TOTAL_EPOCH = config.epochs
@@ -264,7 +287,7 @@ if __name__ == "__main__":
     NAME = (config.name + '_') if config.name != '' else ''
     NAME = NAME + '_'.join([f'B{config.model}', f'v{config.v}', f'lr{config.lr}', 
                             f'batch{config.batch_size}', f'opt_{config.optimizer}', 
-                            f'mel{config.n_mels}', f'chan{config.n_chan}'])
+                            f'mel{config.n_mels}', f'chan{config.n_chan}', f'{config.loss.upper()}'])
     NAME = NAME if NAME.endswith('.h5') else NAME + '.h5'
     """ MODEL """
     model = get_model(config)
@@ -281,13 +304,20 @@ if __name__ == "__main__":
     if config.l2 > 0:
         model = apply_kernel_regularizer(
             model, tf.keras.regularizers.l1_l2(config.l1, config.l2))
+
+    if config.loss.upper() == 'BCE':
+        loss = tf.keras.losses.BinaryCrossentropy()
+    elif config.loss.upper() == 'FOCAL':
+        loss = sigmoid_focal_crossentropy
+
     model.compile(optimizer=opt, 
                 #   loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
-                  loss=tf.keras.losses.BinaryCrossentropy(),
+                  loss=loss,
                   metrics=[tf.keras.metrics.CosineSimilarity(name='tf_cos_sim', axis=-2),
                            cos_sim,
                            tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro')])
     model.summary()
+    print(NAME)
 
     if config.pretrain:
         model.load_weights(NAME)
@@ -300,7 +330,7 @@ if __name__ == "__main__":
     """ TRAINING """
     callbacks = [
         CSVLogger(NAME.replace('.h5', '.csv'), append=True),
-        SWA(start_epoch=TOTAL_EPOCH//2, swa_freq=2),
+        SWA(start_epoch=TOTAL_EPOCH//4, swa_freq=2),
         ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True,
                         verbose=1),
         TerminateOnNaN(),
@@ -314,15 +344,23 @@ if __name__ == "__main__":
                 custom_scheduler(4096, TOTAL_EPOCH/12, config.lr_div)))
     else:
         callbacks.append(
-            ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1))
+            ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
 
-    model.fit(train_set,
-              epochs=TOTAL_EPOCH,
-              batch_size=BATCH_SIZE,
-              steps_per_epoch=config.steps_per_epoch,
-              validation_data=test_set,
-              validation_steps=16,
-              callbacks=callbacks)
-
+    try:
+        model.fit(train_set,
+                epochs=TOTAL_EPOCH,
+                batch_size=BATCH_SIZE,
+                steps_per_epoch=config.steps_per_epoch,
+                validation_data=test_set,
+                validation_steps=16,
+                callbacks=callbacks)
+        print('best model:', NAME.replace('.h5', '_SWA.h5'))
+    except NO_SWA_ERROR:
+        return
     model.save(NAME.replace('.h5', '_SWA.h5'))
+    print(NAME.split('.h5')[0])
 
+
+if __name__ == "__main__":
+    main()
+    

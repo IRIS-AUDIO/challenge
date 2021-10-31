@@ -28,6 +28,10 @@ class MetricsTest(tf.test.TestCase):
         data = tf.random.uniform([450, 3])
         answer = self.metric.get_second_answer(data)
 
+    def test_tf_er(self):
+        data = tf.random.uniform([100, 450, 3])
+        label = tf.random.uniform([100, 450, 3])
+        get_custom_er_temp(data, label)
 
 if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'

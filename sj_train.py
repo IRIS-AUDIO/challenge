@@ -315,7 +315,8 @@ def main():
                   loss=loss,
                   metrics=[tf.keras.metrics.CosineSimilarity(name='tf_cos_sim', axis=-2),
                            cos_sim,
-                           tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro')])
+                           tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),
+                           get_custom_er_new])
     model.summary()
     print(NAME)
 
@@ -329,11 +330,9 @@ def main():
 
     """ TRAINING """
     callbacks = [
-        Custom_Metrics(test_set, config.loss.upper()),
         CSVLogger(NAME.replace('.h5', '.csv'), append=True),
         SWA(start_epoch=TOTAL_EPOCH//4, swa_freq=2),
-        ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True,
-                        verbose=1),
+        ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
         EarlyStopping(monitor='val_loss', patience=30, restore_best_weights=True)
@@ -353,7 +352,7 @@ def main():
                 batch_size=BATCH_SIZE,
                 steps_per_epoch=config.steps_per_epoch,
                 validation_data=test_set,
-                validation_steps=1,
+                validation_steps=16,
                 callbacks=callbacks)
         print('best model:', NAME.replace('.h5', '_SWA.h5'))
     except NO_SWA_ERROR:

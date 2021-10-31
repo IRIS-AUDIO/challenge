@@ -36,6 +36,7 @@ class Custom_Metrics(Callback):
             if i == 10:
                 break
         logs['val_loss'] = LOSS.result().numpy()
+        logs['val_er'] = ER.result().numpy()
         print(f"val_er: {ER.result().numpy()}, val_f1: {F1.result().numpy()}, COS_SIM: {COS_SIM.result().numpy()}, LOSS: {LOSS.result().numpy()}")
         return
 
@@ -106,6 +107,27 @@ class Challenge_Metric:
         self.ts1 = 0 # tmp size
         self.ts2 = 0 # tmp size
 
+def extract_middle(x):
+    # [batch, time, cls]
+    right_begin = tf.clip_by_value(
+        x - tf.pad(x, [[0, 0], [0, 1], [0, 0]])[:, 1:], 0, 1)
+    left_begin = tf.clip_by_value(
+        x - tf.pad(x, [[0, 0], [1, 0], [0, 0]])[:, :-1], 0, 1)
+
+    starts = tf.where(left_begin)
+    ends = tf.where(right_begin)
+    starts = tf.gather(starts, tf.argsort(starts[:, -1]), -1)
+    starts = tf.gather(starts, tf.argsort(starts[:, 0]), 0)
+    ends = tf.gather(ends, tf.argsort(ends[:, -1]), -1)
+    ends = tf.gather(ends, tf.argsort(ends[:, 0]), 0)
+
+    middle = tf.cast((starts+ends)/2, tf.int32)
+    result = tf.ones((tf.shape(middle)[0], tf.shape(x)[0], tf.shape(x)[1], tf.shape(x)[2]), tf.float32)
+    result *= tf.one_hot(middle[:, 0], tf.shape(x)[0])[:, :, None, None]
+    result *= tf.one_hot(middle[:, 1], tf.shape(x)[1])[:, None, :, None]
+    result *= tf.one_hot(middle[:, 2], tf.shape(x)[2])[:, None, None, :]
+    result = tf.reduce_max(result, axis=0)
+    return result
 
 def get_custom_er(gt, preds):
     metric = Challenge_Metric()
@@ -142,7 +164,8 @@ def get_custom_er(gt, preds):
                 tf.cast((cls_2[:,:,0] <= ans_2[:,:,1]),tf.int32)
             cls2_ans = tf.reduce_sum(tf.cast(tf.reduce_sum(cls2_ans, axis=-2) > 0, tf.int32), axis=-1)
             
-            total_score += (cls0.shape[0] + cls1.shape[0] + cls2.shape[0] - 2*(cls0_ans + cls1_ans + cls2_ans))/\
+            total_score += (cls0.shape[0] + cls1.shape[0] + cls2.shape[0] + (ans0.shape[0] + ans1.shape[0] + ans2.shape[0]) \
+                - 2*(cls0_ans + cls1_ans + cls2_ans))/\
                     (ans0.shape[0] + ans1.shape[0] + ans2.shape[0])
             count += 1
     if count != 0:
@@ -151,6 +174,23 @@ def get_custom_er(gt, preds):
         total_score = 0 
     return total_score
 
+def get_custom_er_new(gt, preds):
+    metric = Challenge_Metric()
+    total_score = 0 
+    smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5
+    preds_ = tf.signal.frame(preds, smoothing_kernel_size, 1, pad_end=True, axis=-2)
+    preds_ = tf.reduce_mean(preds_, -2)
+    preds_ = tf.cast(preds_ >= 0.5, tf.float32)
+    mids = extract_middle(preds_)
+    correct = gt * mids 
+    paddings = tf.constant([[0, 0], [1, 0], [0, 0]])
+    gt_temp = tf.pad(gt, paddings)[...,:-1,:]
+    gt_ = tf.math.ceil(tf.reduce_sum(tf.cast(gt != gt_temp, dtype=tf.int32), axis=-2) / 2)
+    ans_num = tf.cast(tf.reduce_sum(gt_), dtype=tf.float32) 
+    preds_num = tf.reduce_sum(mids)
+    correct_num = tf.reduce_sum(correct)
+    total_score = (ans_num + preds_num - 2*correct_num) / ans_num
+    return total_score
 
 def get_er(gt, predict):
     predict_2 = tf.identity(predict)

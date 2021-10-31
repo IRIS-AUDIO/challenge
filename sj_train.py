@@ -335,7 +335,7 @@ def main():
         ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
-        EarlyStopping(monitor='val_loss', patience=30, restore_best_weights=True)
+        earlystop
     ]
 
     if not config.pretrain:
@@ -347,6 +347,8 @@ def main():
             ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
 
     try:
+        from time import time
+        st = time()
         model.fit(train_set,
                 epochs=TOTAL_EPOCH,
                 batch_size=BATCH_SIZE,
@@ -355,9 +357,10 @@ def main():
                 validation_steps=16,
                 callbacks=callbacks)
         print('best model:', NAME.replace('.h5', '_SWA.h5'))
+        print(time() - st, 'seconds')
+        model.save(NAME.replace('.h5', '_SWA.h5'))
     except NO_SWA_ERROR:
-        return
-    model.save(NAME.replace('.h5', '_SWA.h5'))
+        pass
     print(NAME.split('.h5')[0])
 
 

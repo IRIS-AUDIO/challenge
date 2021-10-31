@@ -8,8 +8,9 @@ from utils import *
 
 
 class Custom_Metrics(Callback):
-    def __init__(self, validation_data, loss_type):
+    def __init__(self, validation_data, loss_type, validation_steps=16):
         self.validation_data = validation_data
+        self.validation_steps = validation_steps
         self.F1_metric = tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro')
         if loss_type == 'BCE':
             self.loss = tf.keras.losses.BinaryCrossentropy()
@@ -28,12 +29,11 @@ class Custom_Metrics(Callback):
             er = get_custom_er(temp_targ, temp_pred)
             f1 = self.F1_metric(temp_targ, temp_pred)
             cos_sim_score = cos_sim(temp_targ, temp_pred)
-            f1_score = F1.update_state(f1)
-            if er != 0:
-                ER.update_state(er)
+            F1.update_state(f1)
+            ER.update_state(er)
             COS_SIM.update_state(cos_sim_score)
             LOSS.update_state(loss)
-            if i == 10:
+            if i == self.validation_steps - 1:
                 break
         logs['val_loss'] = LOSS.result().numpy()
         logs['val_er'] = ER.result().numpy()
@@ -137,8 +137,7 @@ def get_custom_er(gt, preds):
         ans0, ans1, ans2 = metric.get_start_end_time(gt_)
         if (ans0.shape[0] + ans1.shape[0] + ans2.shape[0]) != 0:
             smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5
-            preds_ = tf.signal.frame(preds_, smoothing_kernel_size, 1, pad_end=True, axis=-2)
-            preds_ = tf.reduce_mean(preds_, -2)
+            preds_ = tf.keras.layers.AveragePooling1D(smoothing_kernel_size, padding='same')(preds_[tf.newaxis, ...])[0]
             preds_ = tf.cast(preds_ >= 0.5, tf.float32)
             cls0, cls1, cls2 = metric.get_start_end_time(preds_)
 
@@ -166,6 +165,7 @@ def get_custom_er(gt, preds):
             
             total_score += (cls0.shape[0] + cls1.shape[0] + cls2.shape[0] + (ans0.shape[0] + ans1.shape[0] + ans2.shape[0]) \
                 - 2*(cls0_ans + cls1_ans + cls2_ans))/\
+
                     (ans0.shape[0] + ans1.shape[0] + ans2.shape[0])
             count += 1
     if count != 0:

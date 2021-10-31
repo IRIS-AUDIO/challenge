@@ -94,12 +94,15 @@ def extract_middle(x):
     result = tf.reduce_max(result, axis=0)
     return result
 
-def er_score(threshold=0.5):
+def er_score(threshold=0.5, smoothing=True):
     threshold = tf.constant(threshold, tf.float32)
     def compare(y_true, y_pred):
         y_true = tf.cast(y_true >= threshold, tf.int32)
+        if smoothing:
+            smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5
+            y_pred = tf.signal.frame(y_pred, smoothing_kernel_size, 1, pad_end=True, axis=-2)
+            y_pred = tf.reduce_mean(y_pred, -2)
         y_pred = tf.cast(y_pred >= threshold, tf.int32)
-
         # True values
         # [batch, time, cls]
         true_starts = tf.clip_by_value(
@@ -107,6 +110,7 @@ def er_score(threshold=0.5):
         true_ends = tf.clip_by_value(
             y_true - tf.pad(y_true, [[0, 0], [0, 1], [0, 0]])[:, 1:], 0, 1)
         n_true = tf.reduce_sum(tf.cast(true_starts, tf.float32), (1, 2))
+
 
         true_starts = tf.where(true_starts)
         true_ends = tf.where(true_ends)

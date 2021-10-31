@@ -38,8 +38,7 @@ class MetricsTest(tf.test.TestCase):
         for item in self.predict.numpy():
             pred_array[0, item[1]-2:item[1]+2, item[0]] = 1
             pred_array[1, item[1]-2:item[1]+2, item[0]] = 1
-        import pdb; pdb.set_trace()
-        er_func = er_score()
+        er_func = er_score(smoothing=False)
         er = er_func(gt_array, pred_array)
         er = tf.reduce_mean(er)
         assert er == 1.2

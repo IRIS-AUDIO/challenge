@@ -6,41 +6,6 @@ from tensorflow.keras.callbacks import *
 from sj_train import cos_sim
 from utils import *
 
-
-class Custom_Metrics(Callback):
-    def __init__(self, validation_data, loss_type):
-        self.validation_data = validation_data
-        self.F1_metric = tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro')
-        if loss_type == 'BCE':
-            self.loss = tf.keras.losses.BinaryCrossentropy()
-        if loss_type == 'FOCAL':
-            self.loss = sigmoid_focal_crossentropy
-
-    def on_epoch_end(self, epoch, logs):
-        ER = tf.keras.metrics.Mean()
-        F1 = tf.keras.metrics.Mean()
-        COS_SIM = tf.keras.metrics.Mean()
-        LOSS = tf.keras.metrics.Mean()
-        for i, item in enumerate(self.validation_data):
-            temp_targ = item[1]
-            temp_pred = tf.convert_to_tensor(self.model.predict(item[0]))
-            loss = self.loss(temp_targ, temp_pred)
-            er = get_custom_er(temp_targ, temp_pred)
-            f1 = self.F1_metric(temp_targ, temp_pred)
-            cos_sim_score = cos_sim(temp_targ, temp_pred)
-            f1_score = F1.update_state(f1)
-            if er != 0:
-                ER.update_state(er)
-            COS_SIM.update_state(cos_sim_score)
-            LOSS.update_state(loss)
-            if i == 10:
-                break
-        logs['val_loss'] = LOSS.result().numpy()
-        logs['val_er'] = ER.result().numpy()
-        print(f"val_er: {ER.result().numpy()}, val_f1: {F1.result().numpy()}, COS_SIM: {COS_SIM.result().numpy()}, LOSS: {LOSS.result().numpy()}")
-        return
-
-
 class Challenge_Metric:
     def __init__(self, sr=16000, hop=256) -> None:
         self.reset_state()
@@ -129,68 +94,60 @@ def extract_middle(x):
     result = tf.reduce_max(result, axis=0)
     return result
 
-def get_custom_er(gt, preds):
-    metric = Challenge_Metric()
-    total_score = 0 
-    count = 0
-    for gt_, preds_ in zip(gt, preds):
-        ans0, ans1, ans2 = metric.get_start_end_time(gt_)
-        if (ans0.shape[0] + ans1.shape[0] + ans2.shape[0]) != 0:
-            smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5
-            preds_ = tf.signal.frame(preds_, smoothing_kernel_size, 1, pad_end=True, axis=-2)
-            preds_ = tf.reduce_mean(preds_, -2)
-            preds_ = tf.cast(preds_ >= 0.5, tf.float32)
-            cls0, cls1, cls2 = metric.get_start_end_time(preds_)
+def er_score(threshold=0.5):
+    threshold = tf.constant(threshold, tf.float32)
+    def compare(y_true, y_pred):
+        y_true = tf.cast(y_true >= threshold, tf.int32)
+        y_pred = tf.cast(y_pred >= threshold, tf.int32)
 
-            cls0 = tf.expand_dims(tf.cast((cls0[...,-1] + cls0[...,-2])/2, tf.int32), -1)
-            cls1 = tf.expand_dims(tf.cast((cls1[...,-1] + cls1[...,-2])/2, tf.int32), -1)
-            cls2 = tf.expand_dims(tf.cast((cls2[...,-1] + cls2[...,-2])/2, tf.int32), -1)
+        # True values
+        # [batch, time, cls]
+        true_starts = tf.clip_by_value(
+            y_true - tf.pad(y_true, [[0, 0], [1, 0], [0, 0]])[:, :-1], 0, 1)
+        true_ends = tf.clip_by_value(
+            y_true - tf.pad(y_true, [[0, 0], [0, 1], [0, 0]])[:, 1:], 0, 1)
+        n_true = tf.reduce_sum(tf.cast(true_starts, tf.float32), (1, 2))
 
-            ans_0 = tf.tile(tf.expand_dims(ans0, 0), [cls0.shape[0], 1, 1]) # P, G, 2
-            cls_0 = tf.tile(tf.expand_dims(cls0, 1), [1, ans0.shape[0], 1]) # P, G, 1
-            cls0_ans = tf.cast((ans_0[:,:,0] <= cls_0[:,:,0]),tf.int32)*\
-                tf.cast((cls_0[:,:,0] <= ans_0[:,:,1]),tf.int32)
-            cls0_ans = tf.reduce_sum(tf.cast(tf.reduce_sum(cls0_ans, axis=-2) > 0, tf.int32), axis=-1)
+        true_starts = tf.where(true_starts)
+        true_ends = tf.where(true_ends)
+        true_starts = tf.gather(true_starts, tf.argsort(true_starts[:, -1]), -1)
+        true_starts = tf.gather(true_starts, tf.argsort(true_starts[:, 0]), 0)
+        true_ends = tf.gather(true_ends, tf.argsort(true_ends[:, -1]), -1)
+        true_ends = tf.gather(true_ends, tf.argsort(true_ends[:, 0]), 0)
 
-            ans_1 = tf.tile(tf.expand_dims(ans1, 0), [cls1.shape[0], 1, 1]) # P, G, 2
-            cls_1 = tf.tile(tf.expand_dims(cls1, 1), [1, ans1.shape[0], 1]) # P, G, 1
-            cls1_ans = tf.cast((ans_1[:,:,0] <= cls_1[:,:,0]),tf.int32)*\
-                tf.cast((cls_1[:,:,0] <= ans_1[:,:,1]),tf.int32)
-            cls1_ans = tf.reduce_sum(tf.cast(tf.reduce_sum(cls1_ans, axis=-2) > 0, tf.int32), axis=-1)
+        # prediction values
+        pred_starts = tf.clip_by_value(
+            y_pred - tf.pad(y_pred, [[0, 0], [1, 0], [0, 0]])[:, :-1], 0, 1)
+        pred_ends = tf.clip_by_value(
+            y_pred - tf.pad(y_pred, [[0, 0], [0, 1], [0, 0]])[:, 1:], 0, 1)
+        n_pred = tf.reduce_sum(tf.cast(pred_starts, tf.float32), (1, 2))
 
-            ans_2 = tf.tile(tf.expand_dims(ans2, 0), [cls2.shape[0], 1, 1]) # P, G, 2
-            cls_2 = tf.tile(tf.expand_dims(cls2, 1), [1, ans2.shape[0], 1]) # P, G, 1
-            cls2_ans = tf.cast((ans_2[:,:,0] <= cls_2[:,:,0]),tf.int32)*\
-                tf.cast((cls_2[:,:,0] <= ans_2[:,:,1]),tf.int32)
-            cls2_ans = tf.reduce_sum(tf.cast(tf.reduce_sum(cls2_ans, axis=-2) > 0, tf.int32), axis=-1)
-            
-            total_score += (cls0.shape[0] + cls1.shape[0] + cls2.shape[0] + (ans0.shape[0] + ans1.shape[0] + ans2.shape[0]) \
-                - 2*(cls0_ans + cls1_ans + cls2_ans))/\
-                    (ans0.shape[0] + ans1.shape[0] + ans2.shape[0])
-            count += 1
-    if count != 0:
-        total_score /= count
-    else:
-        total_score = 0 
-    return total_score
+        pred_starts = tf.where(pred_starts)
+        pred_ends = tf.where(pred_ends)
+        pred_starts = tf.gather(pred_starts, tf.argsort(pred_starts[:, -1]), -1)
+        pred_starts = tf.gather(pred_starts, tf.argsort(pred_starts[:, 0]), 0)
+        pred_ends = tf.gather(pred_ends, tf.argsort(pred_ends[:, -1]), -1)
+        pred_ends = tf.gather(pred_ends, tf.argsort(pred_ends[:, 0]), 0)
 
-def get_custom_er_new(gt, preds):
-    metric = Challenge_Metric()
-    total_score = 0 
-    smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5
-    preds_ = tf.signal.frame(preds, smoothing_kernel_size, 1, pad_end=True, axis=-2)
-    preds_ = tf.reduce_mean(preds_, -2)
-    preds_ = tf.cast(preds_ >= 0.5, tf.float32)
-    mids = extract_middle(preds_)
-    correct = gt * mids 
-    paddings = tf.constant([[0, 0], [1, 0], [0, 0]])
-    gt_temp = tf.pad(gt, paddings)[...,:-1,:]
-    gt_ = tf.math.ceil(tf.math.ceil(tf.reduce_sum(tf.cast(gt != gt_temp, dtype=tf.int32), axis=-2) / 2))
-    ans_num = tf.cast(tf.reduce_sum(gt_), dtype=tf.float32) 
-    preds_num = tf.reduce_sum(mids)
-    correct_num = tf.reduce_sum(correct)
-    total_score = (ans_num + preds_num - 2*correct_num) / ans_num
-    return total_score
+        middle = tf.cast((pred_starts+pred_ends)/2, tf.int64)
+
+        # correct: correct batch and cls (true, pred)
+        correct = (
+            true_starts[:, ::2, None]==tf.transpose(middle, (1, 0))[None, ::2])
+        correct = tf.reduce_min(tf.cast(correct, tf.float32), axis=1)
+
+        mid_time = tf.transpose(middle[:, 1:2], (1, 0))
+        correct *= tf.cast(true_starts[:, 1:2] <= mid_time, tf.float32)
+        correct *= tf.cast(true_ends[:, 1:2] >= mid_time, tf.float32)
+        correct = tf.reduce_max(correct, axis=-1)
+
+        correct_per_sample = tf.reduce_sum(
+            tf.one_hot(true_starts[:, 0], tf.shape(y_pred)[0])*correct[:, None],
+            0)
+        score = n_true + n_pred - 2 * correct_per_sample
+        score /= tf.clip_by_value(n_true, 1, tf.reduce_max(n_true))
+        return score
+    return compare
 
 def get_er(gt, predict):
     predict_2 = tf.identity(predict)

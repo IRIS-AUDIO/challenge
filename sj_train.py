@@ -316,7 +316,7 @@ def main():
                   metrics=[tf.keras.metrics.CosineSimilarity(name='tf_cos_sim', axis=-2),
                            cos_sim,
                            tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),
-                           get_custom_er_new])
+                           er_score()])
     model.summary()
     print(NAME)
 

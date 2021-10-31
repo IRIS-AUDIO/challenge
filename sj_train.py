@@ -328,15 +328,18 @@ def main():
     test_set = make_dataset(config, training=False)
 
     """ TRAINING """
+    checkpoint = ModelCheckpoint(NAME, monitor='val_er', save_best_only=True, verbose=1)
+    checkpoint._supports_tf_logs = False
+    earlystop = EarlyStopping(monitor='val_er', patience=30, restore_best_weights=True)
+    earlystop._supports_tf_logs = False
     callbacks = [
         Custom_Metrics(test_set, config.loss.upper()),
         CSVLogger(NAME.replace('.h5', '.csv'), append=True),
         SWA(start_epoch=TOTAL_EPOCH//4, swa_freq=2),
-        ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True,
-                        verbose=1),
+        checkpoint,
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
-        EarlyStopping(monitor='val_loss', patience=30, restore_best_weights=True)
+        earlystop
     ]
 
     if not config.pretrain:
@@ -348,17 +351,20 @@ def main():
             ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
 
     try:
+        from time import time
+        st = time()
         model.fit(train_set,
                 epochs=TOTAL_EPOCH,
                 batch_size=BATCH_SIZE,
                 steps_per_epoch=config.steps_per_epoch,
-                validation_data=test_set,
-                validation_steps=1,
+                # validation_data=test_set,
+                # validation_steps=16,
                 callbacks=callbacks)
         print('best model:', NAME.replace('.h5', '_SWA.h5'))
+        print(time() - st, 'seconds')
+        model.save(NAME.replace('.h5', '_SWA.h5'))
     except NO_SWA_ERROR:
-        return
-    model.save(NAME.replace('.h5', '_SWA.h5'))
+        pass
     print(NAME.split('.h5')[0])
 
 

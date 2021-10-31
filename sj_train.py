@@ -329,6 +329,7 @@ def main():
 
     """ TRAINING """
     callbacks = [
+        Custom_Metrics(test_set, config.loss.upper()),
         CSVLogger(NAME.replace('.h5', '.csv'), append=True),
         SWA(start_epoch=TOTAL_EPOCH//4, swa_freq=2),
         ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True,
@@ -352,7 +353,7 @@ def main():
                 batch_size=BATCH_SIZE,
                 steps_per_epoch=config.steps_per_epoch,
                 validation_data=test_set,
-                validation_steps=16,
+                validation_steps=1,
                 callbacks=callbacks)
         print('best model:', NAME.replace('.h5', '_SWA.h5'))
     except NO_SWA_ERROR:

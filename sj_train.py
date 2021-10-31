@@ -335,7 +335,7 @@ def main():
         ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
-        earlystop
+        EarlyStopping(monitor='val_loss', patience=30, restore_best_weights=True)
     ]
 
     if not config.pretrain:

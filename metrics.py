@@ -115,7 +115,7 @@ def get_custom_er(gt, preds):
         ans0, ans1, ans2 = metric.get_start_end_time(gt_)
         if (ans0.shape[0] + ans1.shape[0] + ans2.shape[0]) != 0:
             smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5
-            preds_ = tf.keras.layers.AveragePooling1D(smoothing_kernel_size, padding='same')(preds_)
+            preds_ = tf.keras.layers.AveragePooling1D(smoothing_kernel_size, padding='same')(preds_[tf.newaxis, ...])[0]
             preds_ = tf.cast(preds_ >= 0.5, tf.float32)
             cls0, cls1, cls2 = metric.get_start_end_time(preds_)
 

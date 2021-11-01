@@ -27,26 +27,10 @@ def minmax_log_on_mel(mel, labels=None):
     return mel
 
 
-if __name__ == "__main__":
-    config = ARGS()
-    config.args.add_argument('--p', help='parsing name', action='store_true')
-    config = config.get()
-    if config.p:
-        parsed_name = config.name.split('_')
-        config.model = int(parsed_name[0][-1])
-        config.v = int(parsed_name[1][-1])
-        config.n_mels = int(parsed_name[6][3:])
-        config.n_chan = int(parsed_name[7][-1])
-    os.environ['CUDA_VISIBLE_DEVICES'] = config.gpus
-
-    model = get_model(config)
-    metric = Challenge_Metric()
-    model.load_weights(f'{config.name}.h5')
-    
+def evaluate(config, model, metric: Challenge_Metric, verbose: bool = False):
     with open('sample_answer.json') as f:
         answer_gt = json.load(f)
     answer_gt = answer_gt['task2_answer']
-    final_score = []
 
     for path in sorted(glob('*.wav')):
         inputs = load_wav(path)
@@ -86,17 +70,40 @@ if __name__ == "__main__":
         er = get_er(answer_gt_temp, answer_predict)
         final_score.append(er)
 
-        print()
-        print(f'{path}:{er}')
-        for i in cls0:
-            time = tf.reduce_mean(tf.cast(i, tf.float32))
-            print(f'class man: ({int(time//60)} : {int(time%60)})')
-        for i in cls1:
-            time = tf.reduce_mean(tf.cast(i, tf.float32))
-            print(f'class woman: ({int(time//60)} : {int(time%60)})')
-        for i in cls2:
-            time = tf.reduce_mean(tf.cast(i, tf.float32))
-            print(f'class kid: ({int(time//60)} : {int(time%60)})')
+        if verbose:
+            print()
+            print(f'{path}:{er}')
+            for i in cls0:
+                time = tf.reduce_mean(tf.cast(i, tf.float32))
+                print(f'class man: ({int(time//60)} : {int(time%60)})')
+            for i in cls1:
+                time = tf.reduce_mean(tf.cast(i, tf.float32))
+                print(f'class woman: ({int(time//60)} : {int(time%60)})')
+            for i in cls2:
+                time = tf.reduce_mean(tf.cast(i, tf.float32))
+                print(f'class kid: ({int(time//60)} : {int(time%60)})')
         metric.reset_state()
-    print('FINAL SCORE:', np.mean(final_score))
+    if verbose:
+        print('FINAL SCORE:', np.mean(final_score))
+    return final_score
+
+
+if __name__ == "__main__":
+    config = ARGS()
+    config.args.add_argument('--v', help='verbose', type=bool, default=True)
+    config.args.add_argument('--p', help='parsing name', action='store_true')
+    config = config.get()
+    if config.p:
+        parsed_name = config.name.split('_')
+        config.model = int(parsed_name[0][-1])
+        config.v = int(parsed_name[1][-1])
+        config.n_mels = int(parsed_name[6][3:])
+        config.n_chan = int(parsed_name[7][-1])
+    os.environ['CUDA_VISIBLE_DEVICES'] = config.gpus
+
+    model = get_model(config)
+    metric = Challenge_Metric()
+    model.load_weights(f'{config.name}.h5')
+    
+    final_score = evaluate(config, model, metric, config.v)
 

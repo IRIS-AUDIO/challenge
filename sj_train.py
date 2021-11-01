@@ -21,12 +21,13 @@ class ARGS:
         self.args.add_argument('--name', type=str, default='')
         self.args.add_argument('--gpus', type=str, default='-1')
         self.args.add_argument('--model', type=int, default=0)
-        self.args.add_argument('--v', type=int, default=2)
+        self.args.add_argument('--v', type=int, default=1)
         self.args.add_argument('--pretrain', type=bool, default=False)
         self.args.add_argument('--n_layers', type=int, default=0)
         self.args.add_argument('--n_dim', type=int, default=256)
         self.args.add_argument('--n_chan', type=int, default=2)
         self.args.add_argument('--n_classes', type=int, default=3)
+        self.args.add_argument('--patience', type=int, default=50)
 
         # DATA
         self.args.add_argument('--datapath', type=str, default='/root/datasets/Interspeech2020/generate_wavs/codes')
@@ -51,19 +52,16 @@ class ARGS:
 
         self.args.add_argument('--epochs', type=int, default=400)
         self.args.add_argument('--batch_size', type=int, default=12)
-        self.args.add_argument('--n_frame', type=int, default=2048)
+        self.args.add_argument('--n_frame', type=int, default=512)
         self.args.add_argument('--steps_per_epoch', type=int, default=100)
         self.args.add_argument('--l1', type=float, default=0)
         self.args.add_argument('--l2', type=float, default=1e-6)
-        self.args.add_argument('--loss_alpha', type=float, default=0.8)
-        self.args.add_argument('--loss_l2', type=float, default=1.)
-        self.args.add_argument('--multiplier', type=float, default=10)
         self.args.add_argument('--loss', type=str, default='FOCAL')
 
         # AUGMENTATION
         self.args.add_argument('--snr', type=float, default=-15)
-        self.args.add_argument('--max_voices', type=int, default=10)
-        self.args.add_argument('--max_noises', type=int, default=6)
+        self.args.add_argument('--max_voices', type=int, default=3)
+        self.args.add_argument('--max_noises', type=int, default=2)
 
     def get(self):
         return self.args.parse_args()
@@ -159,54 +157,6 @@ def make_dataset(config, training=True, n_classes=3):
     return pipeline.prefetch(AUTOTUNE)
 
 
-def custom_loss(alpha=0.8, l2=1):
-    def _custom(y_true, y_pred):
-        # y_true, y_pred = [None, time, 30]
-        # [None, time, 30] -> [None, time, 3, 10]
-        t_true = tf.stack(tf.split(y_true, 3, axis=-1), axis=-2)
-        t_pred = tf.stack(tf.split(y_pred, 3, axis=-1), axis=-2)
-
-        # [None, time, 10]
-        d_y_true = tf.reduce_sum(t_true, axis=-2)
-        d_y_pred = tf.reduce_sum(t_pred, axis=-2)
-
-        # [None, time, 3]
-        c_y_true = tf.reduce_sum(t_true, axis=-1)
-        c_y_pred = tf.reduce_sum(t_pred, axis=-1)
-
-        loss = alpha * tf.keras.losses.MAE(tf.reduce_sum(d_y_true, axis=1),
-                                           tf.reduce_sum(d_y_pred, axis=1)) \
-             + (1-alpha) * tf.keras.losses.MAE(tf.reduce_sum(c_y_true, axis=1),
-                                               tf.reduce_sum(c_y_pred, axis=1))
-
-        # TODO: OT loss
-        # TV: total variation loss
-        # normed - degrees [None, time, 10]
-        n_d_true = safe_div(
-            d_y_true, tf.reduce_sum(d_y_true, axis=1, keepdims=True))
-        n_d_pred = safe_div(
-            d_y_pred, tf.reduce_sum(d_y_pred, axis=1, keepdims=True))
-
-        # normed - classes [None, time, 3]
-        n_c_true = safe_div(
-            c_y_true, tf.reduce_sum(c_y_true, axis=1, keepdims=True))
-        n_c_pred = safe_div(
-            c_y_pred, tf.reduce_sum(c_y_pred, axis=1, keepdims=True))
-
-        tv = alpha * tf.reduce_mean(
-                tf.reduce_sum(tf.math.abs(n_d_true - n_d_pred), axis=1) 
-                * tf.reduce_sum(d_y_true, axis=1), # [None, 10]
-                axis=1)
-        tv += (1-alpha) * tf.reduce_mean(
-                tf.reduce_sum(tf.math.abs(n_c_true - n_c_pred), axis=1) 
-                * tf.reduce_sum(c_y_true, axis=1), # [None, 3]
-                axis=1)
-        loss += l2 * tv
-
-        return loss
-    return _custom
-
-
 def custom_scheduler(d_model, warmup_steps=4000, lr_div=2):
     # https://www.tensorflow.org/tutorials/text/transformer#optimizer
     d_model = tf.cast(d_model, tf.float32)
@@ -279,7 +229,7 @@ def main():
     NAME = (config.name + '_') if config.name != '' else ''
     NAME = NAME + '_'.join([f'B{config.model}', f'v{config.v}', f'lr{config.lr}', 
                             f'batch{config.batch_size}', f'opt_{config.optimizer}', 
-                            f'mel{config.n_mels}', f'chan{config.n_chan}', f'{config.loss.upper()}'])
+                            f'mel{config.n_mels}', f'chan{config.n_chan}', f'{config.loss.upper()}', f'framelen{config.n_frame}'])
     NAME = NAME if NAME.endswith('.h5') else NAME + '.h5'
     """ MODEL """
     model = get_model(config)
@@ -308,7 +258,7 @@ def main():
                   metrics=[cos_sim,
                            tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),
                            tf.keras.metrics.Precision(thresholds=0.5),
-                           er_score()])
+                           er_score(smoothing=False)])
     model.summary()
     print(NAME)
 
@@ -327,7 +277,7 @@ def main():
         ModelCheckpoint(NAME, monitor='val_er', save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
-        EarlyStopping(monitor='val_er', patience=30, restore_best_weights=True)
+        EarlyStopping(monitor='val_er', patience=config.patience, restore_best_weights=True)
     ]
 
     if not config.pretrain:

@@ -207,15 +207,6 @@ def custom_loss(alpha=0.8, l2=1):
     return _custom
 
 
-def cos_sim(y_true, y_pred):
-    mask = tf.cast(
-        tf.reduce_sum(y_true, axis=-2) > 0., tf.float32) # [None, 3]
-    mask = safe_div(mask, tf.reduce_sum(mask, axis=-1, keepdims=True))
-    return tf.reduce_sum(
-        tf.keras.losses.cosine_similarity(y_true, y_pred, axis=-2) * mask, 
-        axis=-1)
-
-
 def custom_scheduler(d_model, warmup_steps=4000, lr_div=2):
     # https://www.tensorflow.org/tutorials/text/transformer#optimizer
     d_model = tf.cast(d_model, tf.float32)
@@ -257,6 +248,7 @@ def get_model(config):
 
     # v2 -------------------------
     elif config.v == 2:
+        raise ValueError('version 2 is deprecated')
         out = tf.keras.layers.Conv1DTranspose(128, 2, 2)(out)
         out = tf.keras.layers.Conv1DTranspose(64, 2, 2)(out)
         out = tf.keras.layers.Conv1DTranspose(32, 2, 2)(out)
@@ -313,9 +305,9 @@ def main():
     model.compile(optimizer=opt, 
                 #   loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
                   loss=loss,
-                  metrics=[tf.keras.metrics.CosineSimilarity(name='tf_cos_sim', axis=-2),
-                           cos_sim,
+                  metrics=[cos_sim,
                            tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),
+                           tf.keras.metrics.Precision(thresholds=0.5),
                            er_score()])
     model.summary()
     print(NAME)
@@ -332,10 +324,10 @@ def main():
     callbacks = [
         CSVLogger(NAME.replace('.h5', '.csv'), append=True),
         SWA(start_epoch=TOTAL_EPOCH//4, swa_freq=2),
-        ModelCheckpoint(NAME, monitor='val_loss', save_best_only=True, verbose=1),
+        ModelCheckpoint(NAME, monitor='val_er', save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
-        EarlyStopping(monitor='val_loss', patience=30, restore_best_weights=True)
+        EarlyStopping(monitor='val_er', patience=30, restore_best_weights=True)
     ]
 
     if not config.pretrain:

@@ -95,6 +95,7 @@ def extract_middle(x):
     result = tf.reduce_max(result, axis=0)
     return result
 
+
 def er_score(threshold=0.5, smoothing=True):
     threshold = tf.constant(threshold, tf.float32)
 
@@ -152,7 +153,8 @@ def er_score(threshold=0.5, smoothing=True):
         score = n_true + n_pred - 2 * correct_per_sample
         score /= tf.clip_by_value(n_true, 1, tf.reduce_max(n_true))
         return score
-    return compare
+    return er
+
 
 def get_er(gt, predict):
     predict_2 = tf.identity(predict)

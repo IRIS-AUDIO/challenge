@@ -28,6 +28,7 @@ def minmax_log_on_mel(mel, labels=None):
 
 
 def evaluate(config, model, metric: Challenge_Metric, verbose: bool = False):
+    final_score = []
     with open('sample_answer.json') as f:
         answer_gt = json.load(f)
     answer_gt = answer_gt['task2_answer']
@@ -90,7 +91,7 @@ def evaluate(config, model, metric: Challenge_Metric, verbose: bool = False):
 
 if __name__ == "__main__":
     config = ARGS()
-    config.args.add_argument('--v', help='verbose', type=bool, default=True)
+    config.args.add_argument('--verbose', help='verbose', type=bool, default=True)
     config.args.add_argument('--p', help='parsing name', action='store_true')
     config = config.get()
     if config.p:
@@ -105,5 +106,5 @@ if __name__ == "__main__":
     metric = Challenge_Metric()
     model.load_weights(f'{config.name}.h5')
     
-    final_score = evaluate(config, model, metric, config.v)
+    final_score = evaluate(config, model, metric, config.verbose)
 

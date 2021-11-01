@@ -30,6 +30,7 @@ def extract_middle(x):
 
 def er_score(threshold=0.5, smoothing=True):
     threshold = tf.constant(threshold, tf.float32)
+
     def er(y_true, y_pred):
         y_true = tf.cast(y_true >= threshold, tf.int32)
         if smoothing:
@@ -76,7 +77,7 @@ def er_score(threshold=0.5, smoothing=True):
         mid_time = tf.transpose(middle[:, 1:2], (1, 0))
         correct *= tf.cast(true_starts[:, 1:2] <= mid_time, tf.float32)
         correct *= tf.cast(true_ends[:, 1:2] >= mid_time, tf.float32)
-        correct = tf.reduce_max(correct, axis=-1)
+        correct = tf.reduce_max(tf.pad(correct, [[0, 0], [0, 1]]), -1)
 
         correct_per_sample = tf.reduce_sum(
             tf.one_hot(true_starts[:, 0], tf.shape(y_pred)[0])*correct[:, None],

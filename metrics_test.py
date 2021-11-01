@@ -6,7 +6,7 @@ from metrics import *
 
 class MetricsTest(tf.test.TestCase):
     def setUp(self):
-        self.gt = tf.convert_to_tensor([[0, 0, 10], [2, 0, 20], [1, 15, 30], [2, 31, 40], [1, 27, 32]])
+        self.gt = tf.convert_to_tensor([[0, 0, 10], [2, 0, 20], [1, 15, 30], [2, 31, 40], [1, 32, 35]])
         self.predict = tf.convert_to_tensor([[1, 5], [1, 19], [2, 32], [2, 38], [0, 38]])
         self.metric = Challenge_Metric()
 
@@ -28,6 +28,20 @@ class MetricsTest(tf.test.TestCase):
         data = tf.random.uniform([450, 3])
         answer = self.metric.get_second_answer(data)
 
+    def test_tf_er(self):
+        gt_numpy = self.gt.numpy()
+        gt_array = np.zeros([2, 40, 3])
+        pred_array = np.zeros([2, 40, 3])
+        for item in gt_numpy:
+            gt_array[0, item[1]:item[2], item[0]] = 1
+            gt_array[1, item[1]:item[2], item[0]] = 1
+        for item in self.predict.numpy():
+            pred_array[0, item[1]-2:item[1]+2, item[0]] = 1
+            pred_array[1, item[1]-2:item[1]+2, item[0]] = 1
+        er_func = er_score(smoothing=False)
+        er = er_func(gt_array, pred_array)
+        er = tf.reduce_mean(er)
+        assert er == 1.2
 
 if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'

@@ -289,8 +289,6 @@ def main():
             ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
 
     try:
-        from time import time
-        st = time()
         model.fit(train_set,
                 epochs=TOTAL_EPOCH,
                 batch_size=BATCH_SIZE,
@@ -299,7 +297,6 @@ def main():
                 validation_steps=16,
                 callbacks=callbacks)
         print('best model:', NAME.replace('.h5', '_SWA.h5'))
-        print(time() - st, 'seconds')
         model.save(NAME.replace('.h5', '_SWA.h5'))
     except NO_SWA_ERROR:
         pass

@@ -7,7 +7,7 @@ from transforms import *
 from utils import *
 
 from sj_train import get_model, ARGS, stereo_mono
-from metrics import Challenge_Metric, get_er, output_to_metric
+from metrics import Challenge_Metric, get_er, output_to_metric, er_score
 
 
 def minmax_log_on_mel(mel, labels=None):
@@ -27,11 +27,24 @@ def minmax_log_on_mel(mel, labels=None):
     return mel
 
 
+def second2frame(seconds: list, frame_num, resolution):
+    # seconds = [[class, start, end], ...]
+    frames = np.zeros([frame_num, 3], dtype=np.float32)
+    for second in seconds:
+        class_num = second[0]
+        start = int(np.ceil(second[1] * resolution))
+        end = int(np.ceil(second[2] * resolution))
+        frames[start:end,class_num] += 1
+    return tf.convert_to_tensor(frames, dtype=tf.float32)
+
+
 def evaluate(config, model, metric: Challenge_Metric, verbose: bool = False):
     final_score = []
     with open('sample_answer.json') as f:
         answer_gt = json.load(f)
     answer_gt = answer_gt['task2_answer']
+    sr = 16000
+    hop = 256
 
     for path in sorted(glob('*.wav')):
         inputs = load_wav(path)
@@ -61,8 +74,10 @@ def evaluate(config, model, metric: Challenge_Metric, verbose: bool = False):
         # cls0, cls1, cls2 = metric.get_second_answer(preds)
 
         # smoothing
-        smoothing_kernel_size = int(0.5 * 16000) // 256 # 0.5초 길이의 kernel
+        smoothing_kernel_size = int(0.5 * sr) // hop # 0.5초 길이의 kernel
         preds = tf.keras.layers.AveragePooling1D(smoothing_kernel_size, 1, padding='same')(preds[tf.newaxis, ...])[0]
+        gt = second2frame(answer_gt.get(os.path.splitext(path)[0]), frame_num=len(preds), resolution=sr / hop)
+        aa = er_score(smoothing=False)(gt[tf.newaxis, ...], preds[tf.newaxis, ...])
         
         preds = tf.cast(preds >= 0.5, tf.float32)
         cls0, cls1, cls2 = metric.get_start_end_time(preds)
@@ -70,10 +85,13 @@ def evaluate(config, model, metric: Challenge_Metric, verbose: bool = False):
         answer_predict = output_to_metric(cls0, cls1, cls2)
         er = get_er(answer_gt_temp, answer_predict)
         final_score.append(er)
+        
+        if aa.numpy() != er:
+            import pdb; pdb.set_trace()
 
         if verbose:
             print()
-            print(f'{path}:{er}')
+            print(f'{path}:{er}', aa.numpy())
             for i in cls0:
                 time = tf.reduce_mean(tf.cast(i, tf.float32))
                 print(f'class man: ({int(time//60)} : {int(time%60)})')

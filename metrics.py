@@ -1,99 +1,7 @@
 import numpy as np
 import tensorflow as tf
-import tensorflow_addons as tfa
-import json
 from tensorflow.keras.callbacks import *
 from utils import *
-
-
-class Challenge_Metric:
-    def __init__(self, sr=16000, hop=256) -> None:
-        self.reset_state()
-        self.sr = sr
-        self.hop = hop
-
-    def get_start_end_time(self, data):
-        data1, data2, data3 = self.get_start_end_frame(data)
-        data1 = tf.cast(tf.round(data1 * self.hop / self.sr), tf.int32)
-        data2 = tf.cast(tf.round(data2 * self.hop / self.sr), tf.int32)
-        data3 = tf.cast(tf.round(data3 * self.hop / self.sr), tf.int32)
-        data1 = tf.gather(data1, np.unique(data1, True, axis=0)[1])
-        data2 = tf.gather(data2, np.unique(data2, True, axis=0)[1])
-        data3 = tf.gather(data3, np.unique(data3, True, axis=0)[1])
-        return data1, data2, data3
-
-    def get_start_end_frame(self, data):
-        data_temp = tf.concat([tf.zeros([1,3]), data[:-1,:]], 0)
-        diff_index = tf.where(data_temp != data)
-        class_0 = diff_index[diff_index[:,1] == 0][:,0]
-        class_1 = diff_index[diff_index[:,1] == 1][:,0]
-        class_2 = diff_index[diff_index[:,1] == 2][:,0]
-        
-        if (class_0.shape[0] % 2 != 0):
-            class_0 = tf.concat((class_0, tf.Variable([len(data)], dtype=tf.int64)),0)
-
-        class_0 = tf.reshape(class_0, [-1, 2])
-        class_0 = tf.transpose(tf.concat([[class_0[:,0]], [class_0[:,1] -1]], 0))
-
-        if (class_1.shape[0] % 2 != 0):
-            class_1 = tf.concat((class_1, tf.Variable([len(data)], dtype=tf.int64)),0)
-
-        class_1 = tf.reshape(class_1, [-1, 2])
-        class_1 = tf.transpose(tf.concat([[class_1[:,0]], [class_1[:,1] -1]], 0))
-        
-        if (class_2.shape[0]  % 2 != 0):
-            class_2 = tf.concat((class_2, tf.Variable([len(data)], dtype=tf.int64)),0)
-
-        class_2 = tf.reshape(class_2, [-1, 2])
-        class_2 = tf.transpose(tf.concat([[class_2[:,0]], [class_2[:,1] -1]], 0))
-        return class_0, class_1, class_2
-
-    def get_second_answer(self, data):
-        data_second = np.asarray([self.hop*i//self.sr for i in range(len(data))])
-        second_true = np.zeros([np.max(data_second), 3])
-        for i in range(np.max(data_second)):
-            second_true[i, 0] = (tf.reduce_mean(data[:, 0][data_second == i]) > 0.5)
-            second_true[i, 1] = (tf.reduce_mean(data[:, 1][data_second == i]) > 0.5)
-            second_true[i, 2] = (tf.reduce_mean(data[:, 2][data_second == i]) > 0.5)
-        cls0, cls1, cls2 = self.get_1(second_true)
-        cls0 = tf.cast(cls0, dtype=tf.int32)
-        cls1 = tf.cast(cls1, dtype=tf.int32)
-        cls2 = tf.cast(cls2, dtype=tf.int32)
-        return cls0, cls1, cls2
-
-    def reset_state(self):
-        self.arr0 = tf.TensorArray(tf.int64, size=0, dynamic_size=True, clear_after_read=False)
-        self.arr1 = tf.TensorArray(tf.int64, size=0, dynamic_size=True, clear_after_read=False)
-        self.arr2 = tf.TensorArray(tf.int64, size=0, dynamic_size=True, clear_after_read=False)
-        self.tmp0 = tf.TensorArray(tf.int64, size=2, dynamic_size=True, clear_after_read=True)
-        self.tmp1 = tf.TensorArray(tf.int64, size=2, dynamic_size=True, clear_after_read=True)
-        self.tmp2 = tf.TensorArray(tf.int64, size=2, dynamic_size=True, clear_after_read=True)
-        self.ts0 = 0 # tmp size
-        self.ts1 = 0 # tmp size
-        self.ts2 = 0 # tmp size
-
-
-def extract_middle(x):
-    # [batch, time, cls]
-    right_begin = tf.clip_by_value(
-        x - tf.pad(x, [[0, 0], [0, 1], [0, 0]])[:, 1:], 0, 1)
-    left_begin = tf.clip_by_value(
-        x - tf.pad(x, [[0, 0], [1, 0], [0, 0]])[:, :-1], 0, 1)
-
-    starts = tf.where(left_begin)
-    ends = tf.where(right_begin)
-    starts = tf.gather(starts, tf.argsort(starts[:, -1]), -1)
-    starts = tf.gather(starts, tf.argsort(starts[:, 0]), 0)
-    ends = tf.gather(ends, tf.argsort(ends[:, -1]), -1)
-    ends = tf.gather(ends, tf.argsort(ends[:, 0]), 0)
-
-    middle = tf.cast((starts+ends)/2, tf.int32)
-    result = tf.ones((tf.shape(middle)[0], tf.shape(x)[0], tf.shape(x)[1], tf.shape(x)[2]), tf.float32)
-    result *= tf.one_hot(middle[:, 0], tf.shape(x)[0])[:, :, None, None]
-    result *= tf.one_hot(middle[:, 1], tf.shape(x)[1])[:, None, :, None]
-    result *= tf.one_hot(middle[:, 2], tf.shape(x)[2])[:, None, None, :]
-    result = tf.reduce_max(result, axis=0)
-    return result
 
 
 def er_score(threshold=0.5, smoothing=True):
@@ -154,43 +62,6 @@ def er_score(threshold=0.5, smoothing=True):
         score /= tf.clip_by_value(n_true, 1, tf.reduce_max(n_true))
         return score
     return er
-
-
-def get_er(gt, predict):
-    predict_2 = tf.identity(predict)
-    predict_2 = tf.gather(predict_2, tf.argsort(predict_2[:,1]))
-    gt = tf.gather(gt, tf.argsort(gt[:,1]))
-    N = len(predict_2) + len(gt)
-    answer = 0
-    for gt_item in gt:
-        remove = False
-        for i, pred_item in enumerate(predict_2):
-            if (gt_item[1] <= pred_item[1]) and (pred_item[1] <= gt_item[2]):
-                if gt_item[0] == pred_item[0]:
-                    answer += 2 
-                    temp = i
-                    remove = True
-                    break
-        if remove:
-            predict_2 = tf.concat((predict_2[:i,:], predict_2[i+1:, :]), axis=0)
-    return (N - answer) / len(gt)
-    
-def output_to_metric(cls0, cls1, cls2):
-    answer_list = tf.cast(tf.zeros([0,2]), tf.int32)
-
-    for item in cls0:
-        new_item = tf.cast(tf.stack([0, (item[0] + item[1]) // 2], 0), item.dtype)[tf.newaxis, ...]
-        answer_list = tf.concat([answer_list, new_item], axis=0)
-
-    for item in cls1:
-        new_item = tf.cast(tf.stack([1, (item[0] + item[1]) // 2], 0), item.dtype)[tf.newaxis, ...]
-        answer_list = tf.concat([answer_list, new_item], axis=0)
-
-    for item in cls2:
-        new_item = tf.cast(tf.stack([2, (item[0] + item[1]) // 2], 0), item.dtype)[tf.newaxis, ...]
-        answer_list = tf.concat([answer_list, new_item], axis=0)
-
-    return answer_list
 
 
 def cos_sim(y_true, y_pred):

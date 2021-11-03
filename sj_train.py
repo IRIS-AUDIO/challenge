@@ -117,6 +117,24 @@ def label_downsample(resolution=32):
     return _label_downsample
 
 
+def random_merge_aug(number):
+    def _random_merge_aug(x, y):
+        chan = x.shape[-1] // 2
+        if chan != 2:
+            raise ValueError('This augment can be used in 2 channel audio')
+
+        real = x[...,:chan]
+        imag = x[...,chan:]
+        
+        factor = tf.random.uniform((1, 1, number - chan), 0.1, 0.9)
+        aug_real = factor * tf.repeat(real[..., :1], number - chan, -1) + tf.sqrt(1 - factor) * tf.repeat(real[..., 1:], number - chan, -1)
+        
+        real = tf.concat([real, aug_real], -1)
+        imag = tf.concat([imag, tf.repeat(imag[...,:1] + imag[...,1:], number - chan, -1)], -1)
+        return tf.concat([real, imag], -1), y
+    return _random_merge_aug
+
+
 def make_dataset(config, training=True, n_classes=3):
     # Load required datasets
     if not os.path.exists(config.datapath):
@@ -150,6 +168,8 @@ def make_dataset(config, training=True, n_classes=3):
         pipeline = pipeline.map(mono_chan)
     elif config.n_chan == 3:
         pipeline = pipeline.map(stereo_mono)
+    elif config.n_chan > 3:
+        pipeline = pipeline.map(random_merge_aug(config.n_chan))
     pipeline = pipeline.batch(config.batch_size, drop_remainder=False)
     pipeline = pipeline.map(complex_to_magphase)
     pipeline = pipeline.map(magphase_to_mel(config.n_mels))

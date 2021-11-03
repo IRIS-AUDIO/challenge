@@ -27,7 +27,7 @@ class ARGS:
         self.args.add_argument('--n_dim', type=int, default=256)
         self.args.add_argument('--n_chan', type=int, default=2)
         self.args.add_argument('--n_classes', type=int, default=3)
-        self.args.add_argument('--patience', type=int, default=50)
+        self.args.add_argument('--patience', type=int, default=40)
 
         # DATA
         self.args.add_argument('--datapath', type=str, default='/root/datasets/Interspeech2020/generate_wavs/codes')
@@ -109,10 +109,12 @@ def stereo_mono(x, y=None):
     return tf.concat([x[..., :2], x[..., :1] + x[..., 1:2], x[..., 2:4], x[..., 2:3] + x[..., 3:4]], -1), y
 
 
-def label_downsample(x, y):
-    y = tf.keras.layers.AveragePooling1D(32, 32)(y)
-    y = tf.cast(y >= 0.5, y.dtype)
-    return x, y
+def label_downsample(resolution=32):
+    def _label_downsample(x, y):
+        y = tf.keras.layers.AveragePooling1D(resolution, resolution, padding='same')(y)
+        y = tf.cast(y >= 0.5, y.dtype)[:resolution]
+        return x, y
+    return _label_downsample
 
 
 def make_dataset(config, training=True, n_classes=3):
@@ -152,8 +154,10 @@ def make_dataset(config, training=True, n_classes=3):
     pipeline = pipeline.map(complex_to_magphase)
     pipeline = pipeline.map(magphase_to_mel(config.n_mels))
     pipeline = pipeline.map(minmax_log_on_mel)
-    if config.v == 3:
-        pipeline = pipeline.map(label_downsample)
+    if config.v in (3, 6):
+        pipeline = pipeline.map(label_downsample(32))
+    elif config.v == 5:
+        pipeline = pipeline.map(label_downsample(config.n_frame // (config.n_frame * 256 // 16000)))
     return pipeline.prefetch(AUTOTUNE)
 
 
@@ -167,6 +171,43 @@ def custom_scheduler(d_model, warmup_steps=4000, lr_div=2):
         arg2 = step * (warmup_steps ** -1.5)
         return tf.math.rsqrt(d_model) * tf.math.minimum(arg1, arg2) / lr_div
     return _scheduler
+
+
+def adaptive_clip_grad(parameters, gradients, clip_factor=0.01,
+                       eps=1e-3):
+    new_grads = []
+    for (params, grads) in zip(parameters, gradients):
+        p_norm = unitwise_norm(params)
+        max_norm = tf.math.maximum(p_norm, eps) * clip_factor
+        grad_norm = unitwise_norm(grads)
+        clipped_grad = grads * (max_norm / tf.math.maximum(grad_norm, 1e-6))
+        new_grad = tf.where(grad_norm < max_norm, grads, clipped_grad)
+        new_grads.append(new_grad)
+    return new_grads
+
+
+class CustomModel(tf.keras.Model):
+    def train_step(self, data):
+        # Unpack the data. Its structure depends on your model and
+        # on what you pass to `fit()`.
+        x, y = data
+
+        with tf.GradientTape() as tape:
+            y_pred = self(x, training=True)  # Forward pass
+            # Compute the loss value
+            # (the loss function is configured in `compile()`)
+            loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
+
+        # Compute gradients
+        trainable_vars = self.trainable_variables
+        gradients = tape.gradient(loss, trainable_vars)
+        # gradients = adaptive_clip_grad(self.trainable_variables, gradients)
+        # Update weights
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        # Update metrics (includes the metric that tracks the loss)
+        self.compiled_metrics.update_state(y, y_pred)
+        # Return a dict mapping metric names to current value
+        return {m.name: m.result() for m in self.metrics}
 
 
 def get_model(config):
@@ -207,15 +248,27 @@ def get_model(config):
     elif config.v == 3:
         out = out
     elif config.v == 4:
+        raise ValueError('version 4 is deprecated')
         out = tf.keras.layers.Conv1D(config.n_frame, 1, use_bias=False, data_format='channels_first')(out)
+    elif config.v == 5:
+        if out.shape[1] != config.n_frame * 256 // 16000:
+            out = tf.keras.layers.Conv1D(config.n_frame * 256 // 16000, 1, use_bias=False, data_format='channels_first')(out)
+            out = tf.keras.layers.BatchNormalization()(out)
+            out = tf.keras.layers.Activation('relu')(out)
+        out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
+    elif config.v == 6:
+        out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
     else:
         raise ValueError('wrong version')
     
     out = tf.keras.layers.Dense(config.n_classes)(out)
     # out= tf.keras.layers.Activation('relu')(out)
     # out *= tf.cast(out < 1., out.dtype)
-    out = tf.keras.layers.Activation('sigmoid')(out)
-    return tf.keras.models.Model(inputs=input_tensor, outputs=out)
+    if config.loss == 'MSE':
+        out = tf.keras.layers.Activation('relu')(out)
+    else:
+        out = tf.keras.layers.Activation('sigmoid')(out)
+    return CustomModel(inputs=input_tensor, outputs=out)
 
 
 def main():
@@ -242,6 +295,7 @@ def main():
     elif config.optimizer == 'rmsprop':
         opt = RMSprop(lr, momentum=0.9, clipvalue=config.clipvalue)
     else:
+        raise ValueError('adabelief is deprecated')
         opt = AdaBelief(lr, clipvalue=config.clipvalue)
     if config.l2 > 0:
         model = apply_kernel_regularizer(
@@ -251,14 +305,18 @@ def main():
         loss = tf.keras.losses.BinaryCrossentropy()
     elif config.loss.upper() == 'FOCAL':
         loss = sigmoid_focal_crossentropy
+    elif config.loss.upper() == 'MSE':
+        loss = tf.losses.MSE
 
+    metrics = [cos_sim,
+               tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),
+               tf.keras.metrics.Precision(thresholds=0.5)]
+    if config.v != 5:
+        metrics.append(er_score(smoothing=False))
     model.compile(optimizer=opt, 
                 #   loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
                   loss=loss,
-                  metrics=[cos_sim,
-                           tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),
-                           tf.keras.metrics.Precision(thresholds=0.5),
-                           er_score(smoothing=False)])
+                  metrics=metrics)
     model.summary()
     print(NAME)
 
@@ -286,7 +344,7 @@ def main():
                 custom_scheduler(4096, TOTAL_EPOCH/12, config.lr_div)))
     else:
         callbacks.append(
-            ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
+            ReduceLROnPlateau(monitor='val_er', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
 
     try:
         model.fit(train_set,

@@ -345,3 +345,18 @@ def sigmoid_focal_crossentropy(
     # compute the final loss and return
     return tf.reduce_mean(tf.reduce_sum(alpha_factor * modulating_factor * ce, axis=-1), axis=-1)
 
+
+def unitwise_norm(x):
+    if len(x.get_shape()) <= 1:  # Scalars and vectors
+        axis = None
+        keepdims = False
+    elif len(x.get_shape()) in [2, 3]:  # Linear layers of shape IO or multihead linear
+        axis = 0
+        keepdims = True
+    elif len(x.get_shape()) == 4:  # Conv kernels of shape HWIO
+        axis = [0, 1, 2,]
+        keepdims = True
+    else:
+        raise ValueError(f"Got a parameter with shape not in [1, 2, 4]! {x}")
+    return compute_norm(x, axis, keepdims)
+    

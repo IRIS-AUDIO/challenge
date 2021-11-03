@@ -14,14 +14,9 @@ def main(config):
     data_path = config.path
     paths = sorted(glob(os.path.join(data_path, '*.csv')))
     result_path = os.path.join(data_path, 'result.csv')
-    category = ['이름', '모델', 'version', 'batch', 'lr', 'optimizer', 'input', 'chan', 'output', 'epoch', 'cos_sim', 'er', 'f1_score', 'loss', 'precision', 'val_cos_sim', 'val_er', 'val_f1_score', 'val_loss', 'val_precision', 'test_er', 'swa_test_er']
+    category = ['이름', '모델', 'version', 'batch', 'lr', 'optimizer', 'loss function', 'input', 'chan', 'output', 'epoch', 'cos_sim', 'er', 'f1_score', 'loss', 'precision', 'val_cos_sim', 'val_er', 'val_f1_score', 'val_loss', 'val_precision', 'test_er', 'swa_test_er']
 
     prev_lines = [category]
-    if os.path.exists(result_path):
-        with open(result_path, 'r') as f:
-            results = csv.reader(f)
-            for result in results:
-                prev_lines.append(result)
     
     if len(prev_lines) == 0:
         with open(result_path, 'w') as f:
@@ -49,11 +44,12 @@ def main(config):
         opt = name[5]
         n_mel = name[6].split('mel')[-1]
         chan = name[7].split('chan')[-1]
+        loss = name[8]
         framelen = name[9].split('framelen')[-1]
         outputlen = f'{int(framelen) // 32 if int(version) == 3 else framelen}'
         evaluation = max([len(lines)-config.patience, 0]) > 5
 
-        data = [filename, model, version, batch, lr, opt, f'({n_mel}, {framelen})', chan, f'({outputlen}, 3)'] + data
+        data = [filename, model, version, batch, lr, opt, loss, f'({n_mel}, {framelen})', chan, f'({outputlen}, 3)'] + data
         
         config.model = model[1:]
         config.v = int(version)

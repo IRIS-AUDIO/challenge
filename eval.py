@@ -7,7 +7,7 @@ from transforms import *
 from utils import *
 
 from sj_train import get_model, ARGS, stereo_mono
-from metrics import er_score
+from metrics import Challenge_Metric, output_to_metric, get_er
 
 
 def minmax_log_on_mel(mel, labels=None):
@@ -45,6 +45,7 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
     answer_gt = answer_gt['task2_answer']
     sr = 16000
     hop = 256
+    metric = Challenge_Metric()
 
     for path in sorted(glob('*.wav')):
         inputs = load_wav(path)
@@ -59,7 +60,7 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
         inputs = tf.transpose(inputs, (1, 0, 2, 3))
         preds = model.predict(inputs[..., :config.n_chan]) # [batch, time, class]
         
-        if config.v == 3:
+        if config.v in (3, 6):
             resolution = config.n_frame / preds.shape[-2]
             preds = tf.keras.layers.UpSampling1D(resolution)(preds)
             
@@ -72,8 +73,11 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
         # smoothing
         smoothing_kernel_size = int(0.5 * sr) // hop # 0.5초 길이의 kernel
         preds = tf.keras.layers.AveragePooling1D(smoothing_kernel_size, 1, padding='same')(preds[tf.newaxis, ...])[0]
-        gt = second2frame(answer_gt.get(os.path.splitext(path)[0]), frame_num=len(preds), resolution=sr / hop)
-        er = er_score(smoothing=False)(gt[tf.newaxis, ...], preds[tf.newaxis, ...])
+        preds = tf.cast(preds >= 0.5, tf.float32)
+        cls0, cls1, cls2 = metric.get_start_end_frame(preds)
+        answer_gt_temp = tf.convert_to_tensor(answer_gt[os.path.basename(path)[:-4]])
+        answer_predict = output_to_metric(hop, sr)(cls0, cls1, cls2)
+        er = get_er(answer_gt_temp, answer_predict)
         
         final_score.append(er)
     if verbose:

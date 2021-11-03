@@ -185,8 +185,8 @@ def make_dataset(config, training=True, n_classes=3):
         pipeline = pipeline.map(label_downsample(32))
     elif config.v == 5:
         pipeline = pipeline.map(label_downsample(config.n_frame // (config.n_frame * 256 // 16000)))
-    if config.loss.upper() == 'MSE':
-        pipeline = pipeline.map(multiply_label(config.mse_multiplier))
+    # if config.loss.upper() == 'MSE':
+    #     pipeline = pipeline.map(multiply_label(config.mse_multiplier))
     return pipeline.prefetch(AUTOTUNE)
 
 
@@ -225,8 +225,8 @@ class CustomModel(tf.keras.Model):
             y_pred = self(x, training=True)  # Forward pass
             # Compute the loss value
             # (the loss function is configured in `compile()`)
-            loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
-
+            loss = self.compiled_loss(y, y_pred * self.train_config.mse_multiplier, regularization_losses=self.losses)
+            
         # Compute gradients
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
@@ -234,10 +234,8 @@ class CustomModel(tf.keras.Model):
         # Update weights
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
         # Update metrics (includes the metric that tracks the loss)
-        if self.config.loss.upper() == 'MSE':
-            self.compiled_metrics.update_state(y, y_pred / self.config.mse_multiplier)
-        else:
-            self.compiled_metrics.update_state(y, y_pred)
+        
+        self.compiled_metrics.update_state(y, y_pred)
 
         # Return a dict mapping metric names to current value
         return {m.name: m.result() for m in self.metrics}
@@ -298,7 +296,7 @@ def get_model(config):
     # out= tf.keras.layers.Activation('relu')(out)
     # out *= tf.cast(out < 1., out.dtype)
     if config.loss == 'MSE':
-        out = tf.keras.layers.Activation('relu')(out)
+        out = tf.clip_by_value(tf.keras.layers.Activation('relu')(out), 0, 1)
     else:
         out = tf.keras.layers.Activation('sigmoid')(out)
     return CustomModel(inputs=input_tensor, outputs=out)
@@ -308,6 +306,8 @@ def main():
     config = ARGS().get()
     os.environ['CUDA_VISIBLE_DEVICES'] = config.gpus
     config.loss = config.loss.upper()
+    if config.loss != 'MSE':
+        config.mse_multiplier = 1
     print(config)
 
     TOTAL_EPOCH = config.epochs
@@ -350,6 +350,7 @@ def main():
                 #   loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
                   loss=loss,
                   metrics=metrics)
+    setattr(model, 'train_config', config)
     model.summary()
     print(NAME)
 

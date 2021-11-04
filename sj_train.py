@@ -84,6 +84,26 @@ def minmax_log_on_mel(mel, labels=None):
         return mel, labels
     return mel
 
+def minmax(x, y=None):
+    # batch-wise pre-processing
+    axis = tuple(range(1, len(x.shape)))
+
+    # MIN-MAX
+    x_max = tf.math.reduce_max(x, axis=axis, keepdims=True)
+    x_min = tf.math.reduce_min(x, axis=axis, keepdims=True)
+    x = safe_div(x-x_min, x_max-x_min)
+    if y is not None:
+        return x, y
+    return x
+
+
+def log_on_mel(mel, labels=None):
+    mel = tf.math.log(mel + EPSILON)
+
+    if labels is not None:
+        return mel, labels
+    return mel
+
 
 def augment(specs, labels, time_axis=-2, freq_axis=-3):
     specs = mask(specs, axis=time_axis, max_mask_size=24, n_mask=6)
@@ -127,8 +147,7 @@ def random_merge_aug(number):
         real = x[...,:chan]
         imag = x[...,chan:]
         
-        # factor = tf.random.uniform((1, 1, number - chan), 0.1, 0.9)
-        factor = 2 ** 0.5
+        factor = tf.random.uniform((1, 1, number - chan), 0.1, 0.9)
         aug_real = factor * tf.repeat(real[..., :1], number - chan, -1) + tf.sqrt(1 - factor) * tf.repeat(real[..., 1:], number - chan, -1)
         
         real = tf.concat([real, aug_real], -1)
@@ -183,8 +202,10 @@ def make_dataset(config, training=True, n_classes=3):
     pipeline = pipeline.batch(config.batch_size, drop_remainder=False)
     pipeline = pipeline.map(complex_to_magphase)
     pipeline = pipeline.map(magphase_to_mel(config.n_mels))
-    pipeline = pipeline.map(minmax_log_on_mel)
-    if config.v in (3, 6):
+    if 'nominmax' not in config.name:
+        pipeline = pipeline.map(minmax)
+    pipeline = pipeline.map(log_on_mel)
+    if config.v in (3, 6, 7, 8):
         pipeline = pipeline.map(label_downsample(32))
     elif config.v == 5:
         pipeline = pipeline.map(label_downsample(config.n_frame // (config.n_frame * 256 // 16000)))
@@ -244,9 +265,35 @@ class CustomModel(tf.keras.Model):
         return {m.name: m.result() for m in self.metrics}
 
 
+def big_resconv(inp, kernel=128, chan=24):
+    out = tf.keras.layers.Conv2D(chan, kernel, strides=(2, 2), padding='same')(inp)
+    out = tf.keras.layers.BatchNormalization()(out)
+    out = tf.keras.layers.Activation('relu')(out)
+    out = tf.keras.layers.Dropout(0.1)(out)
+    
+    out2 = tf.keras.layers.Conv2D(out.shape[-1], 1, use_bias=False)(inp)
+    out2 = tf.keras.layers.AveragePooling2D(padding='same')(out2)
+    return out + out2
+
+
 def get_model(config):
     input_tensor = tf.keras.layers.Input(
         shape=(config.n_mels, config.n_frame, config.n_chan))
+    
+    if config.v == 8:
+        inp = input_tensor
+        out = big_resconv(inp)
+        out = big_resconv(out, chan=36)
+        out = big_resconv(out, chan=48)
+        out = big_resconv(out, chan=60)
+        out = big_resconv(out, chan=72)
+        out = tf.transpose(out, perm=[0, 2, 1, 3])
+        out = tf.keras.layers.Reshape([-1, out.shape[-1]*out.shape[-2]])(out)
+        out = tf.keras.layers.Dense(config.n_classes)(out)
+        out = tf.keras.layers.Activation('sigmoid')(out)
+        return CustomModel(inputs=input_tensor, outputs=out)
+        
+
     backbone = getattr(tf.keras.applications.efficientnet, f'EfficientNetB{config.model}')(
         include_top=False, weights=None, input_tensor=input_tensor)
 
@@ -341,6 +388,7 @@ def main():
             model, tf.keras.regularizers.l1_l2(config.l1, config.l2))
 
     if config.loss.upper() == 'BCE':
+        raise ValueError('BCE is deprecated')
         loss = tf.keras.losses.BinaryCrossentropy()
     elif config.loss.upper() == 'FOCAL':
         loss = sigmoid_focal_crossentropy

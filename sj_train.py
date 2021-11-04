@@ -27,9 +27,10 @@ class ARGS:
         self.args.add_argument('--n_dim', type=int, default=256)
         self.args.add_argument('--n_chan', type=int, default=2)
         self.args.add_argument('--n_classes', type=int, default=3)
-        self.args.add_argument('--patience', type=int, default=40)
+        self.args.add_argument('--patience', type=int, default=10)
 
         # DATA
+        self.args.add_argument('--mse_multiplier', type=int, default=10)
         self.args.add_argument('--datapath', type=str, default='/root/datasets/Interspeech2020/generate_wavs/codes')
         self.args.add_argument('--background_sounds', type=str, default='drone_normed_complex_v3.pickle')
         self.args.add_argument('--voices', type=str, default='voice_normed_complex_v3.pickle')
@@ -137,6 +138,12 @@ def random_merge_aug(number):
     return _random_merge_aug
 
 
+def multiply_label(multiply_factor):
+    def _multiply_label(x, y):
+        return x, y * multiply_factor
+    return _multiply_label
+
+
 def make_dataset(config, training=True, n_classes=3):
     # Load required datasets
     if not os.path.exists(config.datapath):
@@ -180,6 +187,8 @@ def make_dataset(config, training=True, n_classes=3):
         pipeline = pipeline.map(label_downsample(32))
     elif config.v == 5:
         pipeline = pipeline.map(label_downsample(config.n_frame // (config.n_frame * 256 // 16000)))
+    # if config.loss.upper() == 'MSE':
+    #     pipeline = pipeline.map(multiply_label(config.mse_multiplier))
     return pipeline.prefetch(AUTOTUNE)
 
 
@@ -218,8 +227,8 @@ class CustomModel(tf.keras.Model):
             y_pred = self(x, training=True)  # Forward pass
             # Compute the loss value
             # (the loss function is configured in `compile()`)
-            loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
-
+            loss = self.compiled_loss(y, y_pred * self.train_config.mse_multiplier, regularization_losses=self.losses)
+            
         # Compute gradients
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
@@ -227,7 +236,9 @@ class CustomModel(tf.keras.Model):
         # Update weights
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
         # Update metrics (includes the metric that tracks the loss)
+        
         self.compiled_metrics.update_state(y, y_pred)
+
         # Return a dict mapping metric names to current value
         return {m.name: m.result() for m in self.metrics}
 
@@ -300,6 +311,8 @@ def main():
     config = ARGS().get()
     os.environ['CUDA_VISIBLE_DEVICES'] = config.gpus
     config.loss = config.loss.upper()
+    if config.loss != 'MSE':
+        config.mse_multiplier = 1
     print(config)
 
     TOTAL_EPOCH = config.epochs
@@ -340,6 +353,7 @@ def main():
                 #   loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
                   loss=loss,
                   metrics=metrics)
+    setattr(model, 'train_config', config)
     model.summary()
     print(NAME)
 
@@ -358,7 +372,7 @@ def main():
         ModelCheckpoint(NAME, monitor='val_er', save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
-        EarlyStopping(monitor='val_er', patience=config.patience, restore_best_weights=True)
+        EarlyStopping(monitor='val_loss', patience=config.patience, restore_best_weights=True)
     ]
 
     if not config.pretrain:

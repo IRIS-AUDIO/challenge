@@ -118,7 +118,7 @@ def label_downsample(resolution=32):
 
 
 def random_merge_aug(number):
-    def _random_merge_aug(x, y):
+    def _random_merge_aug(x, y=None):
         chan = x.shape[-1] // 2
         if chan != 2:
             raise ValueError('This augment can be used in 2 channel audio')
@@ -131,7 +131,9 @@ def random_merge_aug(number):
         
         real = tf.concat([real, aug_real], -1)
         imag = tf.concat([imag, tf.repeat(imag[...,:1] + imag[...,1:], number - chan, -1)], -1)
-        return tf.concat([real, imag], -1), y
+        if y is not None:
+            return tf.concat([real, imag], -1), y
+        return tf.concat([real, imag], -1)
     return _random_merge_aug
 
 
@@ -221,7 +223,7 @@ class CustomModel(tf.keras.Model):
         # Compute gradients
         trainable_vars = self.trainable_variables
         gradients = tape.gradient(loss, trainable_vars)
-        # gradients = adaptive_clip_grad(self.trainable_variables, gradients)
+        gradients = adaptive_clip_grad(self.trainable_variables, gradients)
         # Update weights
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))
         # Update metrics (includes the metric that tracks the loss)
@@ -278,16 +280,19 @@ def get_model(config):
         out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
     elif config.v == 6:
         out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
+    elif config.v == 7:
+        out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
+        big = tf.keras.layers.Reshape((config.n_mels, -1))(input_tensor)
+        big = tf.keras.layers.Conv1D(32, 16, strides=5, padding='same')(big)
+        big = tf.keras.layers.Activation('tanh')(big)
+        out *= big
     else:
         raise ValueError('wrong version')
     
     out = tf.keras.layers.Dense(config.n_classes)(out)
     # out= tf.keras.layers.Activation('relu')(out)
     # out *= tf.cast(out < 1., out.dtype)
-    if config.loss == 'MSE':
-        out = tf.keras.layers.Activation('relu')(out)
-    else:
-        out = tf.keras.layers.Activation('sigmoid')(out)
+    out = tf.keras.layers.Activation('sigmoid')(out)
     return CustomModel(inputs=input_tensor, outputs=out)
 
 
@@ -325,8 +330,6 @@ def main():
         loss = tf.keras.losses.BinaryCrossentropy()
     elif config.loss.upper() == 'FOCAL':
         loss = sigmoid_focal_crossentropy
-    elif config.loss.upper() == 'MSE':
-        loss = tf.losses.MSE
 
     metrics = [cos_sim,
                tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),

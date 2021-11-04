@@ -6,11 +6,7 @@ from data_utils import load_wav
 from transforms import *
 from utils import *
 
-<<<<<<< Updated upstream
 from sj_train import get_model, ARGS, random_merge_aug, stereo_mono
-=======
-from sj_train import get_model, ARGS, stereo_mono, random_merge_aug
->>>>>>> Stashed changes
 from metrics import Challenge_Metric, output_to_metric, get_er
 
 
@@ -66,7 +62,7 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
         inputs = tf.transpose(inputs, (1, 0, 2, 3))
         preds = model.predict(inputs[..., :config.n_chan]) # [batch, time, class]
         
-        if config.v in (3, 6):
+        if config.v in (3, 6, 7, 8):
             resolution = config.n_frame / preds.shape[-2]
             preds = tf.keras.layers.UpSampling1D(resolution)(preds)
             

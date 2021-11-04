@@ -342,7 +342,7 @@ def get_model(config):
     elif config.v == 7:
         out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
         big = tf.keras.layers.Reshape((config.n_mels, -1))(input_tensor)
-        big = tf.keras.layers.Conv1D(32, 16, strides=5, padding='same')(big)
+        big = tf.keras.layers.Conv1D(out.shape[-1], 16, strides=5, padding='same')(big)
         big = tf.keras.layers.Activation('tanh')(big)
         out *= big
     else:

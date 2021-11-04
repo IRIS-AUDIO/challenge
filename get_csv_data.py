@@ -37,7 +37,7 @@ def main(config):
         data = lines[max([len(lines)-config.patience, 0])]
         filename = os.path.splitext(path.split('/')[-1])[0]
         name = filename[filename.find('B'):].split('_')
-        model = name[0]
+        model_name = name[0]
         version = name[1][1:]
         lr = name[2][2:]
         batch = name[3].split('batch')[-1]
@@ -49,14 +49,14 @@ def main(config):
         evaluation = max([len(lines)-config.patience, 0]) > 5
 
         
-        config.model = model[1:]
+        config.model = model_name[1:]
         config.v = int(version)
         config.n_mels = int(n_mel)
         config.n_chan = int(chan)
         config.n_frame = int(framelen)
 
         model = get_model(config)
-        data = [filename, model, version, batch, lr, opt, loss, str(tuple([i for i in model.input.shape[1:-1]])), chan, str(tuple([i for i in model.output.shape[1:]]))] + data
+        data = [filename, model_name, version, batch, lr, opt, loss, str(tuple([i for i in model.input.shape[1:-1]])), chan, str(tuple([i for i in model.output.shape[1:]]))] + data
         if os.path.exists(f'{os.path.splitext(path)[0]}.h5'):
             if evaluation:
                 model.load_weights(f'{os.path.splitext(path)[0]}.h5')

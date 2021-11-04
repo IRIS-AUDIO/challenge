@@ -6,7 +6,11 @@ from data_utils import load_wav
 from transforms import *
 from utils import *
 
+<<<<<<< Updated upstream
 from sj_train import get_model, ARGS, random_merge_aug, stereo_mono
+=======
+from sj_train import get_model, ARGS, stereo_mono, random_merge_aug
+>>>>>>> Stashed changes
 from metrics import Challenge_Metric, output_to_metric, get_er
 
 
@@ -52,7 +56,7 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
         if config.n_chan == 3:
             inputs = stereo_mono(inputs)
         elif config.n_chan > 3:
-            inputs = random_merge_aug(config.n_chan)(inputs)
+            inputs = random_merge_aug(config.n_chan)(inputs, None)
         inputs = complex_to_magphase(inputs)
         inputs = magphase_to_mel(config.n_mels)(inputs)
         inputs = minmax_log_on_mel(inputs)

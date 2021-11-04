@@ -1,5 +1,6 @@
 tensorflow-gpu == 2.2.0
 tensorflow-probability == 0.10.0
+tensorflow_addons
 torch # for data processing
 torchaudio # for data processing
 numpy

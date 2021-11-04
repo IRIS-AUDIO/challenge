@@ -46,10 +46,8 @@ def main(config):
         chan = name[7].split('chan')[-1]
         loss = name[8]
         framelen = name[9].split('framelen')[-1]
-        outputlen = f'{int(framelen) // 32 if int(version) == 3 else framelen}'
         evaluation = max([len(lines)-config.patience, 0]) > 5
 
-        data = [filename, model, version, batch, lr, opt, loss, f'({n_mel}, {framelen})', chan, f'({outputlen}, 3)'] + data
         
         config.model = model[1:]
         config.v = int(version)
@@ -58,6 +56,7 @@ def main(config):
         config.n_frame = int(framelen)
 
         model = get_model(config)
+        data = [filename, model, version, batch, lr, opt, loss, str(tuple([i for i in model.input.shape[1:-1]])), chan, str(tuple([i for i in model.output.shape[1:]]))] + data
         if os.path.exists(f'{os.path.splitext(path)[0]}.h5'):
             if evaluation:
                 model.load_weights(f'{os.path.splitext(path)[0]}.h5')

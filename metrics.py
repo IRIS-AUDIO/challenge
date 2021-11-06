@@ -1,7 +1,5 @@
 import numpy as np
 import tensorflow as tf
-import tensorflow_addons as tfa
-import json
 from tensorflow.keras.callbacks import *
 from utils import *
 
@@ -28,7 +26,7 @@ class Challenge_Metric:
         class_0 = diff_index[diff_index[:,1] == 0][:,0]
         class_1 = diff_index[diff_index[:,1] == 1][:,0]
         class_2 = diff_index[diff_index[:,1] == 2][:,0]
-        
+
         if (class_0.shape[0] % 2 != 0):
             class_0 = tf.concat((class_0, tf.Variable([len(data)], dtype=tf.int64)),0)
 
@@ -40,7 +38,7 @@ class Challenge_Metric:
 
         class_1 = tf.reshape(class_1, [-1, 2])
         class_1 = tf.transpose(tf.concat([[class_1[:,0]], [class_1[:,1] -1]], 0))
-        
+
         if (class_2.shape[0]  % 2 != 0):
             class_2 = tf.concat((class_2, tf.Variable([len(data)], dtype=tf.int64)),0)
 
@@ -73,27 +71,60 @@ class Challenge_Metric:
         self.ts2 = 0 # tmp size
 
 
-def extract_middle(x):
+def extract_middle(y_pred):
     # [batch, time, cls]
-    right_begin = tf.clip_by_value(
-        x - tf.pad(x, [[0, 0], [0, 1], [0, 0]])[:, 1:], 0, 1)
-    left_begin = tf.clip_by_value(
-        x - tf.pad(x, [[0, 0], [1, 0], [0, 0]])[:, :-1], 0, 1)
+    pred_starts = tf.clip_by_value(y_pred - tf.pad(y_pred, [[0, 0], [1, 0], [0, 0]])[:, :-1], 0, 1)
+    pred_ends = tf.clip_by_value(y_pred - tf.pad(y_pred, [[0, 0], [0, 1], [0, 0]])[:, 1:], 0, 1)
+    n_pred = tf.reduce_sum(tf.cast(pred_starts, tf.float32), (1, 2))
+    pred_starts = tf.where(pred_starts)
+    pred_ends = tf.where(pred_ends)
+    pred_starts = tf.gather(pred_starts, tf.argsort(pred_starts[:, -1]), -1)
+    pred_starts = tf.gather(pred_starts, tf.argsort(pred_starts[:, 0]), 0)
+    pred_ends = tf.gather(pred_ends, tf.argsort(pred_ends[:, -1]), -1)
+    pred_ends = tf.gather(pred_ends, tf.argsort(pred_ends[:, 0]), 0)
 
-    starts = tf.where(left_begin)
-    ends = tf.where(right_begin)
-    starts = tf.gather(starts, tf.argsort(starts[:, -1]), -1)
-    starts = tf.gather(starts, tf.argsort(starts[:, 0]), 0)
-    ends = tf.gather(ends, tf.argsort(ends[:, -1]), -1)
-    ends = tf.gather(ends, tf.argsort(ends[:, 0]), 0)
+    middle = tf.cast((pred_starts+pred_ends)/2, tf.int64)
+    return middle
 
-    middle = tf.cast((starts+ends)/2, tf.int32)
-    result = tf.ones((tf.shape(middle)[0], tf.shape(x)[0], tf.shape(x)[1], tf.shape(x)[2]), tf.float32)
-    result *= tf.one_hot(middle[:, 0], tf.shape(x)[0])[:, :, None, None]
-    result *= tf.one_hot(middle[:, 1], tf.shape(x)[1])[:, None, :, None]
-    result *= tf.one_hot(middle[:, 2], tf.shape(x)[2])[:, None, None, :]
-    result = tf.reduce_max(result, axis=0)
-    return result
+
+def get_er(gt, predict):
+    predict_2 = tf.identity(predict)
+    predict_2 = tf.gather(predict_2, tf.argsort(predict_2[:,1]))
+    gt = tf.gather(gt, tf.argsort(gt[:,1]))
+    N = len(predict_2) + len(gt)
+    answer = 0
+    for gt_item in gt:
+        remove = False
+        for i, pred_item in enumerate(predict_2):
+            if (gt_item[1] <= pred_item[1]) and (pred_item[1] <= gt_item[2]):
+                if gt_item[0] == pred_item[0]:
+                    answer += 2 
+                    temp = i
+                    remove = True
+                    break
+        if remove:
+            predict_2 = tf.concat((predict_2[:i,:], predict_2[i+1:, :]), axis=0)
+    return (N - answer) / len(gt)
+
+def output_to_metric(hop, sr):
+    hop = hop
+    sr = sr
+    def output_to_metric_(cls0, cls1, cls2):
+        answer_list = tf.cast(tf.zeros([0,2]), tf.int32)
+
+        for item in cls0:
+            new_item = tf.cast(tf.stack([0, ((item[0] + item[1]) / 2)*hop/sr], 0), answer_list.dtype)[tf.newaxis, ...]
+            answer_list = tf.concat([answer_list, new_item], axis=0)
+
+        for item in cls1:
+            new_item = tf.cast(tf.stack([1, ((item[0] + item[1]) / 2)*hop/sr], 0), answer_list.dtype)[tf.newaxis, ...]
+            answer_list = tf.concat([answer_list, new_item], axis=0)
+
+        for item in cls2:
+            new_item = tf.cast(tf.stack([2, ((item[0] + item[1]) / 2)*hop/sr], 0), answer_list.dtype)[tf.newaxis, ...]
+            answer_list = tf.concat([answer_list, new_item], axis=0)
+        return answer_list
+    return output_to_metric_
 
 
 def er_score(threshold=0.5, smoothing=True):
@@ -154,43 +185,6 @@ def er_score(threshold=0.5, smoothing=True):
         score /= tf.clip_by_value(n_true, 1, tf.reduce_max(n_true))
         return score
     return er
-
-
-def get_er(gt, predict):
-    predict_2 = tf.identity(predict)
-    predict_2 = tf.gather(predict_2, tf.argsort(predict_2[:,1]))
-    gt = tf.gather(gt, tf.argsort(gt[:,1]))
-    N = len(predict_2) + len(gt)
-    answer = 0
-    for gt_item in gt:
-        remove = False
-        for i, pred_item in enumerate(predict_2):
-            if (gt_item[1] <= pred_item[1]) and (pred_item[1] <= gt_item[2]):
-                if gt_item[0] == pred_item[0]:
-                    answer += 2 
-                    temp = i
-                    remove = True
-                    break
-        if remove:
-            predict_2 = tf.concat((predict_2[:i,:], predict_2[i+1:, :]), axis=0)
-    return (N - answer) / len(gt)
-    
-def output_to_metric(cls0, cls1, cls2):
-    answer_list = tf.cast(tf.zeros([0,2]), tf.int32)
-
-    for item in cls0:
-        new_item = tf.cast(tf.stack([0, (item[0] + item[1]) // 2], 0), item.dtype)[tf.newaxis, ...]
-        answer_list = tf.concat([answer_list, new_item], axis=0)
-
-    for item in cls1:
-        new_item = tf.cast(tf.stack([1, (item[0] + item[1]) // 2], 0), item.dtype)[tf.newaxis, ...]
-        answer_list = tf.concat([answer_list, new_item], axis=0)
-
-    for item in cls2:
-        new_item = tf.cast(tf.stack([2, (item[0] + item[1]) // 2], 0), item.dtype)[tf.newaxis, ...]
-        answer_list = tf.concat([answer_list, new_item], axis=0)
-
-    return answer_list
 
 
 def cos_sim(y_true, y_pred):

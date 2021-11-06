@@ -27,9 +27,10 @@ class ARGS:
         self.args.add_argument('--n_dim', type=int, default=256)
         self.args.add_argument('--n_chan', type=int, default=2)
         self.args.add_argument('--n_classes', type=int, default=3)
-        self.args.add_argument('--patience', type=int, default=50)
+        self.args.add_argument('--patience', type=int, default=10)
 
         # DATA
+        self.args.add_argument('--mse_multiplier', type=int, default=1)
         self.args.add_argument('--datapath', type=str, default='/root/datasets/Interspeech2020/generate_wavs/codes')
         self.args.add_argument('--background_sounds', type=str, default='drone_normed_complex_v3.pickle')
         self.args.add_argument('--voices', type=str, default='voice_normed_complex_v3.pickle')
@@ -83,6 +84,26 @@ def minmax_log_on_mel(mel, labels=None):
         return mel, labels
     return mel
 
+def minmax(x, y=None):
+    # batch-wise pre-processing
+    axis = tuple(range(1, len(x.shape)))
+
+    # MIN-MAX
+    x_max = tf.math.reduce_max(x, axis=axis, keepdims=True)
+    x_min = tf.math.reduce_min(x, axis=axis, keepdims=True)
+    x = safe_div(x-x_min, x_max-x_min)
+    if y is not None:
+        return x, y
+    return x
+
+
+def log_on_mel(mel, labels=None):
+    mel = tf.math.log(mel + EPSILON)
+
+    if labels is not None:
+        return mel, labels
+    return mel
+
 
 def augment(specs, labels, time_axis=-2, freq_axis=-3):
     specs = mask(specs, axis=time_axis, max_mask_size=24, n_mask=6)
@@ -109,10 +130,38 @@ def stereo_mono(x, y=None):
     return tf.concat([x[..., :2], x[..., :1] + x[..., 1:2], x[..., 2:4], x[..., 2:3] + x[..., 3:4]], -1), y
 
 
-def label_downsample(x, y):
-    y = tf.keras.layers.AveragePooling1D(32, 32)(y)
-    y = tf.cast(y >= 0.5, y.dtype)
-    return x, y
+def label_downsample(resolution=32):
+    def _label_downsample(x, y):
+        y = tf.keras.layers.AveragePooling1D(resolution, resolution, padding='same')(y)
+        y = tf.cast(y >= 0.5, y.dtype)[:resolution]
+        return x, y
+    return _label_downsample
+
+
+def random_merge_aug(number):
+    def _random_merge_aug(x, y=None):
+        chan = x.shape[-1] // 2
+        if chan != 2:
+            raise ValueError('This augment can be used in 2 channel audio')
+
+        real = x[...,:chan]
+        imag = x[...,chan:]
+        
+        factor = tf.random.uniform((1, 1, number - chan), 0.1, 0.9)
+        aug_real = factor * tf.repeat(real[..., :1], number - chan, -1) + tf.sqrt(1 - factor) * tf.repeat(real[..., 1:], number - chan, -1)
+        
+        real = tf.concat([real, aug_real], -1)
+        imag = tf.concat([imag, tf.repeat(imag[...,:1] + imag[...,1:], number - chan, -1)], -1)
+        if y is not None:
+            return tf.concat([real, imag], -1), y
+        return tf.concat([real, imag], -1)
+    return _random_merge_aug
+
+
+def multiply_label(multiply_factor):
+    def _multiply_label(x, y):
+        return x, y * multiply_factor
+    return _multiply_label
 
 
 def make_dataset(config, training=True, n_classes=3):
@@ -148,12 +197,20 @@ def make_dataset(config, training=True, n_classes=3):
         pipeline = pipeline.map(mono_chan)
     elif config.n_chan == 3:
         pipeline = pipeline.map(stereo_mono)
+    elif config.n_chan > 3:
+        pipeline = pipeline.map(random_merge_aug(config.n_chan))
     pipeline = pipeline.batch(config.batch_size, drop_remainder=False)
     pipeline = pipeline.map(complex_to_magphase)
     pipeline = pipeline.map(magphase_to_mel(config.n_mels))
-    pipeline = pipeline.map(minmax_log_on_mel)
-    if config.v == 3:
-        pipeline = pipeline.map(label_downsample)
+    if 'nominmax' not in config.name:
+        pipeline = pipeline.map(minmax)
+    pipeline = pipeline.map(log_on_mel)
+    if config.v in (3, 6, 7, 8):
+        pipeline = pipeline.map(label_downsample(32))
+    elif config.v == 5:
+        pipeline = pipeline.map(label_downsample(config.n_frame // (config.n_frame * 256 // 16000)))
+    if config.loss.upper() in ('MSE', 'MAE'):
+        pipeline = pipeline.map(multiply_label(config.mse_multiplier))
     return pipeline.prefetch(AUTOTUNE)
 
 
@@ -169,9 +226,74 @@ def custom_scheduler(d_model, warmup_steps=4000, lr_div=2):
     return _scheduler
 
 
+def adaptive_clip_grad(parameters, gradients, clip_factor=0.01,
+                       eps=1e-3):
+    new_grads = []
+    for (params, grads) in zip(parameters, gradients):
+        p_norm = unitwise_norm(params)
+        max_norm = tf.math.maximum(p_norm, eps) * clip_factor
+        grad_norm = unitwise_norm(grads)
+        clipped_grad = grads * (max_norm / tf.math.maximum(grad_norm, 1e-6))
+        new_grad = tf.where(grad_norm < max_norm, grads, clipped_grad)
+        new_grads.append(new_grad)
+    return new_grads
+
+
+class CustomModel(tf.keras.Model):
+    def train_step(self, data):
+        # Unpack the data. Its structure depends on your model and
+        # on what you pass to `fit()`.
+        x, y = data
+
+        with tf.GradientTape() as tape:
+            y_pred = self(x, training=True)  # Forward pass
+            # Compute the loss value
+            # (the loss function is configured in `compile()`)
+            loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
+            
+        # Compute gradients
+        trainable_vars = self.trainable_variables
+        gradients = tape.gradient(loss, trainable_vars)
+        gradients = adaptive_clip_grad(self.trainable_variables, gradients)
+        # Update weights
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        # Update metrics (includes the metric that tracks the loss)
+        
+        self.compiled_metrics.update_state(y, y_pred / self.train_config.mse_multiplier)
+
+        # Return a dict mapping metric names to current value
+        return {m.name: m.result() for m in self.metrics}
+
+
+def big_resconv(inp, kernel=128, chan=24):
+    out = tf.keras.layers.Conv2D(chan, kernel, strides=(2, 2), padding='same')(inp)
+    out = tf.keras.layers.BatchNormalization()(out)
+    out = tf.keras.layers.Activation('relu')(out)
+    out = tf.keras.layers.Dropout(0.1)(out)
+    
+    out2 = tf.keras.layers.Conv2D(out.shape[-1], 1, use_bias=False)(inp)
+    out2 = tf.keras.layers.AveragePooling2D(padding='same')(out2)
+    return out + out2
+
+
 def get_model(config):
     input_tensor = tf.keras.layers.Input(
         shape=(config.n_mels, config.n_frame, config.n_chan))
+    
+    if config.v == 8:
+        inp = input_tensor
+        out = big_resconv(inp)
+        out = big_resconv(out, chan=36)
+        out = big_resconv(out, chan=48)
+        out = big_resconv(out, chan=60)
+        out = big_resconv(out, chan=72)
+        out = tf.transpose(out, perm=[0, 2, 1, 3])
+        out = tf.keras.layers.Reshape([-1, out.shape[-1]*out.shape[-2]])(out)
+        out = tf.keras.layers.Dense(config.n_classes)(out)
+        out = tf.keras.layers.Activation('sigmoid')(out)
+        return CustomModel(inputs=input_tensor, outputs=out)
+        
+
     backbone = getattr(tf.keras.applications.efficientnet, f'EfficientNetB{config.model}')(
         include_top=False, weights=None, input_tensor=input_tensor)
 
@@ -207,7 +329,22 @@ def get_model(config):
     elif config.v == 3:
         out = out
     elif config.v == 4:
+        raise ValueError('version 4 is deprecated')
         out = tf.keras.layers.Conv1D(config.n_frame, 1, use_bias=False, data_format='channels_first')(out)
+    elif config.v == 5:
+        if out.shape[1] != config.n_frame * 256 // 16000:
+            out = tf.keras.layers.Conv1D(config.n_frame * 256 // 16000, 1, use_bias=False, data_format='channels_first')(out)
+            out = tf.keras.layers.BatchNormalization()(out)
+            out = tf.keras.layers.Activation('relu')(out)
+        out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
+    elif config.v == 6:
+        out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
+    elif config.v == 7:
+        out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
+        big = tf.keras.layers.Reshape((config.n_mels, -1))(input_tensor)
+        big = tf.keras.layers.Conv1D(out.shape[-1], 16, strides=5, padding='same')(big)
+        big = tf.keras.layers.Activation('tanh')(big)
+        out *= big
     else:
         raise ValueError('wrong version')
     
@@ -215,13 +352,15 @@ def get_model(config):
     # out= tf.keras.layers.Activation('relu')(out)
     # out *= tf.cast(out < 1., out.dtype)
     out = tf.keras.layers.Activation('sigmoid')(out)
-    return tf.keras.models.Model(inputs=input_tensor, outputs=out)
+    return CustomModel(inputs=input_tensor, outputs=out)
 
 
 def main():
     config = ARGS().get()
     os.environ['CUDA_VISIBLE_DEVICES'] = config.gpus
     config.loss = config.loss.upper()
+    if config.loss != 'MSE':
+        config.mse_multiplier = 1
     print(config)
 
     TOTAL_EPOCH = config.epochs
@@ -242,23 +381,28 @@ def main():
     elif config.optimizer == 'rmsprop':
         opt = RMSprop(lr, momentum=0.9, clipvalue=config.clipvalue)
     else:
+        raise ValueError('adabelief is deprecated')
         opt = AdaBelief(lr, clipvalue=config.clipvalue)
     if config.l2 > 0:
         model = apply_kernel_regularizer(
             model, tf.keras.regularizers.l1_l2(config.l1, config.l2))
 
     if config.loss.upper() == 'BCE':
+        raise ValueError('BCE is deprecated')
         loss = tf.keras.losses.BinaryCrossentropy()
     elif config.loss.upper() == 'FOCAL':
         loss = sigmoid_focal_crossentropy
 
+    metrics = [cos_sim,
+               tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),
+               tf.keras.metrics.Precision(thresholds=0.5)]
+    if config.v != 5:
+        metrics.append(er_score(smoothing=False))
     model.compile(optimizer=opt, 
                 #   loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
                   loss=loss,
-                  metrics=[cos_sim,
-                           tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro'),
-                           tf.keras.metrics.Precision(thresholds=0.5),
-                           er_score(smoothing=False)])
+                  metrics=metrics)
+    setattr(model, 'train_config', config)
     model.summary()
     print(NAME)
 
@@ -277,7 +421,7 @@ def main():
         ModelCheckpoint(NAME, monitor='val_er', save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
-        EarlyStopping(monitor='val_er', patience=config.patience, restore_best_weights=True)
+        EarlyStopping(monitor='val_loss', patience=config.patience, restore_best_weights=True)
     ]
 
     if not config.pretrain:
@@ -286,11 +430,9 @@ def main():
                 custom_scheduler(4096, TOTAL_EPOCH/12, config.lr_div)))
     else:
         callbacks.append(
-            ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
+            ReduceLROnPlateau(monitor='val_er', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
 
     try:
-        from time import time
-        st = time()
         model.fit(train_set,
                 epochs=TOTAL_EPOCH,
                 batch_size=BATCH_SIZE,
@@ -299,7 +441,6 @@ def main():
                 validation_steps=16,
                 callbacks=callbacks)
         print('best model:', NAME.replace('.h5', '_SWA.h5'))
-        print(time() - st, 'seconds')
         model.save(NAME.replace('.h5', '_SWA.h5'))
     except NO_SWA_ERROR:
         pass

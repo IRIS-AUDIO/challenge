@@ -9,9 +9,6 @@ class MetricsTest(tf.test.TestCase):
         self.gt = tf.convert_to_tensor([[0, 0, 10], [2, 0, 20], [1, 15, 30], [2, 31, 40], [1, 32, 35]])
         self.predict = tf.convert_to_tensor([[1, 5], [1, 19], [2, 32], [2, 38], [0, 38]])
 
-    def test_get_er(self):
-        self.assertEqual(1.2, get_er(self.gt, self.predict))
-
     def test_er_score(self):
         gt_numpy = self.gt.numpy()
         gt_array = np.zeros([2, 40, 3])

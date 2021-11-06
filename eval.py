@@ -6,25 +6,8 @@ from data_utils import load_wav
 from transforms import *
 from utils import *
 
-from sj_train import get_model, ARGS, stereo_mono
+from sj_train import get_model, ARGS, stereo_mono, minmax_log_on_mel
 from metrics import Challenge_Metric, get_er, output_to_metric
-
-
-def minmax_log_on_mel(mel, labels=None):
-    # batch-wise pre-processing
-    axis = tuple(range(1, len(mel.shape)))
-
-    # MIN-MAX
-    mel_max = tf.math.reduce_max(mel, axis=axis, keepdims=True)
-    mel_min = tf.math.reduce_min(mel, axis=axis, keepdims=True)
-    mel = safe_div(mel-mel_min, mel_max-mel_min)
-
-    # LOG
-    mel = tf.math.log(mel + EPSILON)
-
-    if labels is not None:
-        return mel, labels
-    return mel
 
 
 def evaluate(config, model, metric: Challenge_Metric, verbose: bool = False):
@@ -39,7 +22,7 @@ def evaluate(config, model, metric: Challenge_Metric, verbose: bool = False):
             inputs = stereo_mono(inputs)
         inputs = complex_to_magphase(inputs)
         inputs = magphase_to_mel(config.n_mels)(inputs)
-        inputs = minmax_log_on_mel(inputs)
+        inputs = minmax_log_on_mel(config)(inputs)
         frame_len = inputs.shape[-2]
         overlap_hop = 512
 

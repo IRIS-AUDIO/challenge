@@ -90,7 +90,8 @@ def minmax_log_on_mel(config):
         mel_min = tf.math.reduce_min(mel, axis=axis, keepdims=True)
         mel = safe_div(mel-mel_min, mel_max-mel_min)
         if model_type == 'vad' or model_type == 'ensemble':
-            mel = tf.transpose(mel, (0, 2, 1, 3))
+            if len(mel.shape) == 4:
+                mel = tf.transpose(mel, (0, 2, 1, 3))
         # LOG
         mel = tf.math.log(mel + EPSILON)
 

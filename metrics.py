@@ -1,8 +1,78 @@
+import json
+from glob import glob
+
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.callbacks import *
-from utils import *
+import tensorflow_addons as tfa
 
+from utils import *
+from data_utils import *
+from transforms import *
+
+
+class eval_callback(tf.keras.callbacks.Callback):
+    def __init__(self, config, NAME):
+        super(eval_callback, self).__init__()
+        self.config = config
+        self.name = NAME
+        
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch % 10 == 2:
+            model = tf.keras.models.clone_model(self.model)
+            model.load_weights(self.name)
+            evaluate(self.config, model, verbose=True)
+            
+
+def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
+    final_score = []
+    with open('sample_answer.json') as f:
+        answer_gt = json.load(f)
+    answer_gt = answer_gt['task2_answer']
+    sr = 16000
+    hop = 256
+    metric = Challenge_Metric()
+
+    for path in sorted(glob('*.wav')):
+        inputs = load_wav(path)
+        if config.n_chan == 3:
+            inputs = stereo_mono(inputs)
+        elif config.n_chan > 3:
+            inputs = random_merge_aug(config.n_chan)(inputs, None)
+        inputs = stft_filter(int(round(256 * 1000 / 16000)))(inputs)
+        inputs = complex_to_magphase(inputs)
+        inputs = magphase_to_mel(config.n_mels)(inputs)
+        inputs = minmax(inputs)
+        inputs = log_on_mel(inputs)
+        frame_len = inputs.shape[-2]
+
+        inputs = tf.signal.frame(inputs, config.n_frame, overlap_hop, pad_end=True, axis=-2)
+        inputs = tf.transpose(inputs, (1, 0, 2, 3))
+        preds = model.predict(inputs[..., :config.n_chan]) # [batch, time, class]
+        
+        if config.v in label_downsample_model:
+            resolution = config.n_frame / preds.shape[-2]
+            preds = tf.keras.layers.UpSampling1D(resolution)(preds)
+            
+        preds = tf.transpose(preds, [2, 0, 1])
+        total_counts = tf.signal.overlap_and_add(tf.ones_like(preds), overlap_hop)[..., :frame_len]
+        preds = tf.signal.overlap_and_add(preds, overlap_hop)[..., :frame_len]
+        preds /= total_counts
+        preds = tf.transpose(preds, [1, 0])
+
+        # smoothing
+        smoothing_kernel_size = int(0.5 * sr) // hop # 0.5초 길이의 kernel
+        preds = tf.keras.layers.AveragePooling1D(smoothing_kernel_size, 1, padding='same')(preds[tf.newaxis, ...])[0]
+        preds = tf.cast(preds >= 0.5, tf.float32)
+        cls0, cls1, cls2 = metric.get_start_end_frame(preds)
+        answer_gt_temp = tf.convert_to_tensor(answer_gt[os.path.basename(path)[:-4]])
+        answer_predict = output_to_metric(hop, sr)(cls0, cls1, cls2)
+        er = get_er(answer_gt_temp, answer_predict)
+        
+        final_score.append(er)
+    if verbose:
+        print('FINAL SCORE:', np.mean(final_score))
+    return final_score
 
 class Challenge_Metric:
     def __init__(self, sr=16000, hop=256) -> None:
@@ -188,10 +258,25 @@ def er_score(threshold=0.5, smoothing=True):
 
 
 def cos_sim(y_true, y_pred):
+    if isinstance(y_true, tuple):
+        y_true = y_true[0]
+    if isinstance(y_pred, tuple):
+        y_pred = y_pred[0]
     mask = tf.cast(
         tf.reduce_sum(y_true, axis=-2) > 0., tf.float32) # [None, 3]
     mask = safe_div(mask, tf.reduce_sum(mask, axis=-1, keepdims=True))
     return tf.reduce_sum(
         tf.keras.losses.cosine_similarity(y_true, y_pred, axis=-2) * mask, 
         axis=-1)
+
+
+def f1_score():
+    f1_score_fn = tfa.metrics.F1Score(num_classes=3, threshold=0.5, average='micro')
+    def f1_score(y_true, y_pred):
+        if isinstance(y_true, tuple):
+            y_true = y_true[0]
+        if isinstance(y_pred, tuple):
+            y_pred = y_pred[0]
+        return f1_score_fn(y_true, y_pred)
+    return f1_score
 

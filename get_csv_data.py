@@ -6,7 +6,7 @@ from numpy import max, mean
 from tqdm import tqdm
 
 from sj_train import ARGS, get_model
-from eval import evaluate
+from metrics import evaluate
 
 
 def main(config):

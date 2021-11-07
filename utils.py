@@ -4,6 +4,7 @@ import pickle
 import tensorflow as tf
 
 EPSILON = 1e-8
+label_downsample_model = (3, 6, 7, 8, 9)
 
 
 ''' 
@@ -359,4 +360,9 @@ def unitwise_norm(x):
     else:
         raise ValueError(f"Got a parameter with shape not in [1, 2, 4]! {x}")
     return compute_norm(x, axis, keepdims)
+
+
+def compute_norm(x, axis, keepdims):
+    return tf.math.reduce_sum(x ** 2, axis=axis, keepdims=keepdims) ** 0.5
+
     

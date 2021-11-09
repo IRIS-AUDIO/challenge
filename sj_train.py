@@ -1,6 +1,9 @@
 import argparse
-import numpy as np
 import os
+from copy import deepcopy
+from re import L
+
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras.callbacks import *
 from tensorflow.keras.losses import *
@@ -13,19 +16,6 @@ from data_utils import *
 from swa import SWA, NO_SWA_ERROR
 from transforms import *
 from utils import *
-from eval import *
-
-
-class eval_callback(tf.keras.callbacks.Callback):
-    def __init__(self, config, NAME):
-        super(eval_callback, self).__init__()
-        self.config = config
-        self.name = NAME
-    def on_epoch_end(self, epoch, logs=None):
-        if epoch % 10 == 2:
-            model = tf.keras.models.clone_model(self.model)
-            model.load_weights(self.name)
-            evaluate(self.config, model, verbose=True)
 
 
 class ARGS:
@@ -41,7 +31,7 @@ class ARGS:
         self.args.add_argument('--n_dim', type=int, default=256)
         self.args.add_argument('--n_chan', type=int, default=2)
         self.args.add_argument('--n_classes', type=int, default=3)
-        self.args.add_argument('--patience', type=int, default=10)
+        self.args.add_argument('--patience', type=int, default=30)
 
         # DATA
         self.args.add_argument('--mse_multiplier', type=int, default=1)
@@ -65,7 +55,7 @@ class ARGS:
         self.args.add_argument('--lr_div', type=float, default=2)
         self.args.add_argument('--clipvalue', type=float, default=0.01)
 
-        self.args.add_argument('--epochs', type=int, default=400)
+        self.args.add_argument('--epochs', type=int, default=300)
         self.args.add_argument('--batch_size', type=int, default=12)
         self.args.add_argument('--n_frame', type=int, default=512)
         self.args.add_argument('--steps_per_epoch', type=int, default=100)
@@ -113,6 +103,7 @@ def make_dataset(config, training=True, n_classes=3):
         pipeline = pipeline.map(complex_to_magphase)
         pipeline = pipeline.map(speech_enhancement_preprocess)
         pipeline = pipeline.batch(config.batch_size, drop_remainder=False)
+        pipeline = pipeline.map(label_downsample(32))
         return pipeline.prefetch(AUTOTUNE)
     pipeline = pipeline.map(to_frame_labels)
     if training: 
@@ -182,7 +173,7 @@ class CustomModel(tf.keras.Model):
             # Compute the loss value
             # (the loss function is configured in `compile()`)
             loss = self.compiled_loss(y, y_pred)
-            
+
         # Compute gradients
         trainable_vars = self.trainable_variables
         
@@ -237,20 +228,20 @@ def define_keras_model(config=None):
     td_dim = 1024
     input_tensor = tf.keras.layers.Input(
         shape=(config.n_mels, config.n_frame, config.n_chan))
-    x = tf.keras.layers.Permute((2,1,3))(input_tensor)
-    x = ConvMPBlock(input_tensor, num_convs=2, fsize=fsize, BN=True)
-    x = ConvMPBlock(x, num_convs=2, fsize=2*fsize, BN=True)
-    x = ConvMPBlock(x, num_convs=3, fsize=4*fsize, BN=True)
-    x = ConvMPBlock(x, num_convs=3, fsize=8*fsize, BN=True)
-    x = ConvMPBlock(x, num_convs=3, fsize=16*fsize, BN=True)
+    x = input_tensor
+    x = ConvMPBlock(x, num_convs=2, fsize=fsize, BN=True)
+    for i in range(1, 5):
+        x = ConvMPBlock(x, num_convs=3, fsize=fsize * 2**i, BN=True)
+
     x = tf.keras.layers.Permute((2,1,3))(x)
     x = tf.keras.layers.Reshape((x.shape[1], x.shape[2]*x.shape[3]))(x)
     x = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(td_dim, activation='relu'))(x)
     x = FullyConnectedLayer(x, 256, BN=True)
     x = FullyConnectedLayer(x, 128, BN=True)
     x = FullyConnectedLayer(x, 64, BN=True)
+    x = FullyConnectedLayer(x, 3, 'sigmoid' if config.model_type == 'vad' else 'relu')
     if config.model_type == 'vad':
-        x = FullyConnectedLayer(x, 3, 'sigmoid')
+        return CustomModel(inputs=input_tensor, outputs=x)
 
     input_tensor_2 = tf.transpose(input_tensor, perm=[0, 2, 1, 3])
     backbone = getattr(tf.keras.applications.efficientnet, f'EfficientNetB{config.model}')(
@@ -272,14 +263,24 @@ def define_keras_model(config=None):
     model = tf.keras.models.Model(input_tensor, x)
     return model
 
+
 def convset(inp, chan=16):
-    out = tf.keras.layers.Conv2D(chan, 5, strides=2, padding='same')(inp)
-    out = tf.keras.layers.BatchNormalization()(out)
-    out = tf.keras.layers.Activation('relu')(out)
+    out = inp
+    for _ in range(2):
+        out = tf.keras.layers.Conv2D(chan, 3, strides=1, padding='same')(out)
+        out = tf.keras.layers.BatchNormalization()(out)
+        out = tf.keras.layers.Activation('relu')(out)
+    out = tf.keras.layers.MaxPooling2D()(out)
     return out
 
-    model = tf.keras.models.Model(input_tensor, x)
-    return model
+
+def upsampling(inp, chan=64):
+    out = inp
+    out = tf.keras.layers.Conv2D(chan, 3, strides=1, padding='same')(out)
+    out = tf.keras.layers.BatchNormalization()(out)
+    out = tf.keras.layers.Activation('relu')(out)
+    return tf.keras.layers.Conv2DTranspose(chan, 2, 2, padding='same')(out)
+
 
 def get_model(config):
     input_tensor = tf.keras.layers.Input(
@@ -302,35 +303,40 @@ def get_model(config):
         merge_input = input_tensor[:, 1:]
         merge_input = tf.transpose(input_tensor, perm=[0, 2, 1, 3])
 
-        inp1 = convset(merge_input, 16)
-        inp2 = convset(inp1, 32)
-        inp3 = convset(inp2, 64)
-        latent = convset(inp3, 128)
+        inp1 = convset(merge_input, 64)
+        inp2 = convset(inp1, 128)
+        inp3 = convset(inp2, 256)
+        latent = convset(inp3, 512)
         
-        speech3 = tf.keras.layers.Conv2DTranspose(64, 2, 2, padding='same')(latent)
-        speech2 = tf.keras.layers.Conv2DTranspose(32, 2, 2, padding='same')(tf.keras.layers.Concatenate(-1)([inp3, speech3]))
-        speech1 = tf.keras.layers.Conv2DTranspose(16, 2, 2, padding='same')(tf.keras.layers.Concatenate(-1)([inp2, speech2]))
-        speech = tf.keras.layers.Conv2DTranspose(1, 2, 2, padding='same')(tf.keras.layers.Concatenate(-1)([inp1, speech1]))
+        speech3 = upsampling(latent, 256)
+        speech2 = upsampling(tf.keras.layers.Concatenate(-1)([inp3, speech3]), 128)
+        speech1 = upsampling(tf.keras.layers.Concatenate(-1)([inp2, speech2]), 64)
+        speech = upsampling(tf.keras.layers.Concatenate(-1)([inp1, speech1]), 1)
 
-        noise3 = tf.keras.layers.Conv2DTranspose(64, 2, 2, padding='same')(latent)
-        noise2 = tf.keras.layers.Conv2DTranspose(32, 2, 2, padding='same')(tf.keras.layers.Concatenate(-1)([inp3, noise3]))
-        noise1 = tf.keras.layers.Conv2DTranspose(16, 2, 2, padding='same')(tf.keras.layers.Concatenate(-1)([inp2, noise2]))
-        noise = tf.keras.layers.Conv2DTranspose(1, 2, 2, padding='same')(tf.keras.layers.Concatenate(-1)([inp1, noise1]))
+        noise3 = upsampling(latent, 256)
+        noise2 = upsampling(tf.keras.layers.Concatenate(-1)([inp3, noise3]), 128)
+        noise1 = upsampling(tf.keras.layers.Concatenate(-1)([inp2, noise2]), 64)
+        noise = upsampling(tf.keras.layers.Concatenate(-1)([inp1, noise1]), 1)
         
+        speech = tf.keras.layers.Concatenate(-1)([speech, noise])
         out = tf.transpose(speech, perm=[0, 2, 1, 3])
-        backbone = getattr(tf.keras.applications.efficientnet, f'EfficientNetB4')(
-        include_top=False, weights=None, input_tensor=out)
-        out = tf.keras.layers.Permute((2, 1, 3))(backbone.output)
-        out = tf.keras.layers.Reshape((-1, out.shape[-1] * out.shape[-2]))(out)
-        out = tf.keras.layers.Conv1DTranspose(128, 2, 2)(out)
-        out = tf.keras.layers.Activation('relu')(out)
-        out = tf.keras.layers.Conv1DTranspose(64, 2, 2)(out)
-        out = tf.keras.layers.Activation('relu')(out)
-        out = tf.keras.layers.Conv1DTranspose(32, 2, 2)(out)
-        out = tf.keras.layers.Activation('relu')(out)
-        out = tf.keras.layers.Conv1DTranspose(16, 2, 2)(out)
-        out = tf.keras.layers.Activation('relu')(out)
-        out = tf.keras.layers.Conv1DTranspose(8, 2, 2)(out)
+        config.n_mels = out.shape[1]
+        tmp_config = deepcopy(config)
+        tmp_config.n_chan = out.shape[-1]
+        out = define_keras_model(tmp_config)(out)
+        # backbone = getattr(tf.keras.applications.efficientnet, f'EfficientNetB4')(
+        # include_top=False, weights=None, input_tensor=out)
+        # out = tf.keras.layers.Permute((2, 1, 3))(backbone.output)
+        # out = tf.keras.layers.Reshape((-1, out.shape[-1] * out.shape[-2]))(out)
+        # out = tf.keras.layers.Conv1DTranspose(128, 2, 2)(out)
+        # out = tf.keras.layers.Activation('relu')(out)
+        # out = tf.keras.layers.Conv1DTranspose(64, 2, 2)(out)
+        # out = tf.keras.layers.Activation('relu')(out)
+        # out = tf.keras.layers.Conv1DTranspose(32, 2, 2)(out)
+        # out = tf.keras.layers.Activation('relu')(out)
+        # out = tf.keras.layers.Conv1DTranspose(16, 2, 2)(out)
+        # out = tf.keras.layers.Activation('relu')(out)
+        # out = tf.keras.layers.Conv1DTranspose(8, 2, 2)(out)
         out = tf.keras.layers.Activation('relu')(out)
         out = tf.keras.layers.Dense(config.n_classes)(out)
         out = tf.keras.layers.Activation('sigmoid', name='class')(out)
@@ -414,11 +420,9 @@ def main():
     TOTAL_EPOCH = config.epochs
     BATCH_SIZE = config.batch_size
     NAME = (config.name + '_') if config.name != '' else ''
-    NAME = NAME + '_'.join([f'B{config.model}', f'v{config.v}', f'lr{config.lr}', 
+    NAME = NAME + '_'.join([f'B{config.model}' if config.model_type == 'eff' else 'vad', f'v{config.v}', f'lr{config.lr}', 
                             f'batch{config.batch_size}', f'opt_{config.optimizer}', 
                             f'mel{config.n_mels}', f'chan{config.n_chan}', f'{config.loss.upper()}', f'framelen{config.n_frame}'])
-    if config.model_type == 'vad':
-        NAME += '_vad'
     NAME = NAME if NAME.endswith('.h5') else NAME + '.h5'
     """ MODEL """
     model = get_model(config)
@@ -438,10 +442,11 @@ def main():
     #         model, tf.keras.regularizers.l1_l2(config.l1, config.l2))
 
     if config.loss.upper() == 'BCE':
-        loss = [tf.keras.losses.BinaryCrossentropy(), tf.keras.losses.MSE, tf.keras.losses.MSE]
+        loss = tf.keras.losses.BinaryCrossentropy()
     elif config.loss.upper() == 'FOCAL':
-        raise ValueError('BCE is deprecated')
         loss = sigmoid_focal_crossentropy
+    if config.v == 9:
+        loss = [loss, tf.losses.MSE, tf.losses.MSE]
 
     metrics = [cos_sim,
                f1_score()]
@@ -450,6 +455,7 @@ def main():
     model.compile(optimizer=opt, 
                 #   loss=custom_loss(alpha=config.loss_alpha, l2=config.loss_l2),
                   loss=loss,
+                  loss_weights=[1, 10, 10],
                   metrics=metrics)
     setattr(model, 'train_config', config)
     model.summary()
@@ -467,7 +473,7 @@ def main():
     callbacks = [
         CSVLogger(NAME.replace('.h5', '.csv'), append=True),
         SWA(start_epoch=TOTAL_EPOCH//4, swa_freq=2),
-        ModelCheckpoint(NAME, monitor='val_er', save_best_only=True, verbose=1),
+        ModelCheckpoint(NAME, monitor='val_class_er' if config.v == 9 else 'val_er', save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
         EarlyStopping(monitor='val_loss', patience=config.patience, restore_best_weights=True),
@@ -483,8 +489,6 @@ def main():
             ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='max'))
 
     try:
-        # aa = [(x,y) for x,y in train_set.take(1)][0]
-        # model.train_step(aa)
         model.fit(train_set,
                 epochs=TOTAL_EPOCH,
                 batch_size=BATCH_SIZE,

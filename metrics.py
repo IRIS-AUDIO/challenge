@@ -39,16 +39,22 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
             inputs = stereo_mono(inputs)
         elif config.n_chan > 3:
             inputs = random_merge_aug(config.n_chan)(inputs, None)
-        inputs = stft_filter(int(round(256 * 1000 / 16000)))(inputs)
-        inputs = complex_to_magphase(inputs)
-        inputs = magphase_to_mel(config.n_mels)(inputs)
-        inputs = minmax(inputs)
-        inputs = log_on_mel(inputs)
+        if config.v != 9:
+            inputs = stft_filter(int(round(256 * 1000 / 16000)))(inputs)
+            inputs = complex_to_magphase(inputs)
+            inputs = magphase_to_mel(config.n_mels)(inputs)
+            inputs = minmax(inputs)
+            inputs = log_on_mel(inputs)
+        else:
+            inputs = complex_to_magphase(inputs)
+            inputs = speech_enhancement_preprocess(inputs)
         frame_len = inputs.shape[-2]
 
         inputs = tf.signal.frame(inputs, config.n_frame, overlap_hop, pad_end=True, axis=-2)
         inputs = tf.transpose(inputs, (1, 0, 2, 3))
         preds = model.predict(inputs[..., :config.n_chan]) # [batch, time, class]
+        if config.v == 9:
+            preds = preds[0]
         
         if config.v in label_downsample_model:
             resolution = config.n_frame / preds.shape[-2]
@@ -73,6 +79,7 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
     if verbose:
         print('FINAL SCORE:', np.mean(final_score))
     return final_score
+
 
 class Challenge_Metric:
     def __init__(self, sr=16000, hop=256) -> None:
@@ -175,6 +182,7 @@ def get_er(gt, predict):
         if remove:
             predict_2 = tf.concat((predict_2[:i,:], predict_2[i+1:, :]), axis=0)
     return (N - answer) / len(gt)
+
 
 def output_to_metric(hop, sr):
     hop = hop

@@ -82,8 +82,15 @@ def stereo_mono(x, y=None):
 
 def label_downsample(resolution=32):
     def _label_downsample(x, y):
-        y = tf.keras.layers.AveragePooling1D(resolution, resolution, padding='same')(y)
-        y = tf.cast(y >= 0.5, y.dtype)[:resolution]
+        if isinstance(y, (list, tuple)):
+            y_ = y[0]
+            y_ = tf.keras.layers.AveragePooling1D(resolution, resolution, padding='same')(y_)
+            y_ = tf.cast(y_ >= 0.5, y_.dtype)[:resolution]
+            y = (y_,) + tuple([*y[1:]])
+        else:
+            y = tf.keras.layers.AveragePooling1D(resolution, resolution, padding='same')(y)
+            y = tf.cast(y >= 0.5, y.dtype)[:resolution]
+
         return x, y
     return _label_downsample
 
@@ -127,12 +134,14 @@ def stft_filter(filter_num):
     return _stft_filter
 
 
-def speech_enhancement_preprocess(x, y):
+def speech_enhancement_preprocess(x, y=None):
     """
     :param y: ([..., n_voices, n_frames, n_classes], ..., ...)
     :return: [..., n_frames, n_classes]
     """
     x = x[1:,...,:x.shape[-1] // 2]
+    if y is None:
+        return x
     y = (tf.reduce_sum(y[0], axis=-3), y[1][1:, ...,:x.shape[-1] // 2], y[2][1:, ...,:x.shape[-1] // 2])
     return x, y
 

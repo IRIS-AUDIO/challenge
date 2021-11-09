@@ -11,7 +11,8 @@ def merge_complex_specs(background,
                         t_axis=1, # time-axis
                         min_ratio=2/3,
                         min_noise_ratio=1/2,
-                        snr=-20):
+                        snr=-20,
+                        seperate_noise_voice=False):
     '''
     OUTPUT:
         complex_spec: (freq, time, chan2)
@@ -31,6 +32,8 @@ def merge_complex_specs(background,
         [1 if i != t_axis else (n_frame+bg_frame-1) // bg_frame 
          for i in range(n_dims)])
     complex_spec = tf.image.random_crop(background, output_shape)
+    only_voice = tf.zeros_like(complex_spec)
+    only_noise = tf.zeros_like(complex_spec)
 
     # voices
     max_voices = tf.shape(voices)[0]
@@ -74,6 +77,8 @@ def merge_complex_specs(background,
                              tf.float32)
 
         complex_spec += v_ratio * voice * no_overlap
+        if seperate_noise_voice:
+            only_voice += v_ratio * voice * no_overlap
         label += l * no_overlap
     
     if noises is not None:
@@ -94,7 +99,11 @@ def merge_complex_specs(background,
                     [[0, 0] if i != t_axis else [pad_size]*2
                      for i in range(n_dims)])
             noise = tf.image.random_crop(noise, output_shape)
+            if seperate_noise_voice:
+                only_noise += n_ratio * noise
             complex_spec += n_ratio * noise
+    if seperate_noise_voice:
+        label = (label, only_voice, only_noise)
 
     return complex_spec, label
 

@@ -6,7 +6,7 @@ from numpy import max, mean
 from tqdm import tqdm
 
 from sj_train import ARGS, get_model
-from eval import evaluate
+from metrics import evaluate
 
 
 def main(config):
@@ -14,7 +14,7 @@ def main(config):
     data_path = config.path
     paths = sorted(glob(os.path.join(data_path, '*.csv')))
     result_path = os.path.join(data_path, 'result.csv')
-    category = ['이름', '모델', 'version', 'batch', 'lr', 'optimizer', 'loss function', 'input', 'chan', 'output', 'epoch', 'cos_sim', 'er', 'f1_score', 'loss', 'precision', 'val_cos_sim', 'val_er', 'val_f1_score', 'val_loss', 'val_precision', 'test_er', 'swa_test_er']
+    category = ['이름', '모델', 'version', 'batch', 'lr', 'optimizer', 'loss function', 'input', 'chan', 'output', 'epoch', 'cos_sim', 'er', 'f1_score', 'loss', 'val_cos_sim', 'val_er', 'val_f1_score', 'val_loss', 'test_er', 'swa_test_er']
 
     prev_lines = [category]
     
@@ -36,7 +36,10 @@ def main(config):
                 lines.append(line)
         data = lines[max([len(lines)-config.patience, 0])]
         filename = os.path.splitext(path.split('/')[-1])[0]
-        name = filename[filename.find('B'):].split('_')
+        if 'vad' not in filename:
+            name = filename[filename.find('B'):].split('_')
+        else:
+            name = filename[filename.find('vad'):].split('_')
         model_name = name[0]
         version = name[1][1:]
         lr = name[2][2:]
@@ -46,6 +49,10 @@ def main(config):
         chan = name[7].split('chan')[-1]
         loss = name[8]
         framelen = name[9].split('framelen')[-1]
+        if 'vad' in name:
+            config.model_type = 'vad'
+        else:
+            config.model_type = 'eff'
         evaluation = max([len(lines)-config.patience, 0]) > 5
 
         
@@ -54,13 +61,23 @@ def main(config):
         config.n_mels = int(n_mel)
         config.n_chan = int(chan)
         config.n_frame = int(framelen)
-
-        model = get_model(config)
-        data = [filename, model_name, version, batch, lr, opt, loss, str(tuple([i for i in model.input.shape[1:-1]])), chan, str(tuple([i for i in model.output.shape[1:]]))] + data
+        try:
+            model = get_model(config)
+        except ValueError:
+            continue
+        
+        if config.v == 9:
+            output = str(tuple([i for i in model.output[0].shape[1:]]))
+        else:
+            output = str(tuple([i for i in model.output.shape[1:]]))
+        data = [filename, 'vad' if config.model_type == 'vad' else model_name, version, batch, lr, opt, loss, str(tuple([i for i in model.input.shape[1:-1]])), chan, output] + data
         if os.path.exists(f'{os.path.splitext(path)[0]}.h5'):
             if evaluation:
-                model.load_weights(f'{os.path.splitext(path)[0]}.h5')
-                score = evaluate(config, model, overlap_hop=int(framelen) // 2, verbose=True)
+                try:
+                    model.load_weights(f'{os.path.splitext(path)[0]}.h5')
+                    score = evaluate(config, model, overlap_hop=int(framelen) // 2, verbose=True)
+                except:
+                    continue
             else:
                 score = 1.0
             data += [mean(score)]

@@ -7,7 +7,7 @@ from utils import *
 from data_utils import *
 
 from sj_train import get_model, ARGS, random_merge_aug, stereo_mono, stft_filter, label_downsample_model
-from metrics import Challenge_Metric, output_to_metric, get_er
+from metrics import Challenge_Metric, output_to_metric, get_er, evaluate
     
 
 def minmax_log_on_mel(mel, labels=None):

@@ -70,8 +70,10 @@ def to_frame_labels(x, y):
     return x, y
 
 
-def mono_chan(x, y):
-    return x[..., :1], y
+def mono_chan(x, y=None):
+    if y is not None:
+        return x[..., :1] + x[..., 1:], y
+    return x
 
 
 def stereo_mono(x, y=None):

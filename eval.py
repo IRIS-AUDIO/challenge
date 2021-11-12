@@ -47,9 +47,13 @@ if __name__ == "__main__":
     config = config.get()
     if config.p:
         parsed_name = config.name.split('_')
-        if parsed_name[0][0] != 'B':
+        if parsed_name[0][0] not in ('B', 'v'):
             parsed_name = parsed_name[1:]
-        config.model = int(parsed_name[0][-1])
+        if parsed_name[0] == 'vad':
+            config.model_type = 'vad'
+            config.model = 1
+        else:
+            config.model = int(parsed_name[0][-1])
         config.v = int(parsed_name[1][-1])
         config.n_mels = int(parsed_name[6][3:])
         config.n_chan = int(parsed_name[7][-1])

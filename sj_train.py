@@ -97,7 +97,7 @@ def make_dataset(config, training=True, n_classes=3):
                              n_classes=n_classes,
                              snr=config.snr,
                              min_ratio=1,
-                             seperate_noise_voice=config.v == 9)
+                             seperate_noise_voice=config.model_type == 'se' and config.v == 9)
     if config.model_type == 'se' and config.v == 9:
         # pipeline = pipeline.map(complex_to_magphase)
         pipeline = pipeline.map(speech_enhancement_preprocess)

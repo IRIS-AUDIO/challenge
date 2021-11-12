@@ -1,7 +1,6 @@
 import argparse
 import os
 from copy import deepcopy
-from re import L
 
 import numpy as np
 import tensorflow as tf
@@ -24,19 +23,19 @@ class ARGS:
         self.args.add_argument('--name', type=str, default='')
         self.args.add_argument('--gpus', type=str, default='-1')
         self.args.add_argument('--model', type=int, default=0)
-        self.args.add_argument('--model_type', type=str, default='eff')
+        self.args.add_argument('--model_type', type=str, default='vad', choices=['vad', 'eff', 'se'])
         self.args.add_argument('--v', type=int, default=1)
         self.args.add_argument('--pretrain', type=bool, default=False)
         self.args.add_argument('--n_layers', type=int, default=0)
         self.args.add_argument('--n_dim', type=int, default=256)
         self.args.add_argument('--n_chan', type=int, default=2)
         self.args.add_argument('--n_classes', type=int, default=3)
-        self.args.add_argument('--patience', type=int, default=30)
+        self.args.add_argument('--patience', type=int, default=10)
 
         # DATA
         self.args.add_argument('--mse_multiplier', type=int, default=1)
         self.args.add_argument('--datapath', type=str, default='/root/datasets/Interspeech2020/generate_wavs/codes')
-        self.args.add_argument('--background_sounds', type=str, default='drone_normed_complex_v3.pickle')
+        self.args.add_argument('--background_sounds', type=str, default='drone_normed_complex_v4.pickle')
         self.args.add_argument('--voices', type=str, default='voice_normed_complex_v3.pickle')
         self.args.add_argument('--labels', type=str, default='voice_labels_mfc_v3.npy')
         self.args.add_argument('--noises', type=str, default='noises_specs_v2.pickle')
@@ -64,8 +63,8 @@ class ARGS:
         self.args.add_argument('--loss', type=str, default='BCE')
 
         # AUGMENTATION
-        self.args.add_argument('--snr', type=float, default=-15)
-        self.args.add_argument('--max_voices', type=int, default=3)
+        self.args.add_argument('--snr', type=float, default=-20)
+        self.args.add_argument('--max_voices', type=int, default=7)
         self.args.add_argument('--max_noises', type=int, default=2)
 
     def get(self):
@@ -99,8 +98,8 @@ def make_dataset(config, training=True, n_classes=3):
                              snr=config.snr,
                              min_ratio=1,
                              seperate_noise_voice=config.v == 9)
-    if config.v == 9:
-        pipeline = pipeline.map(complex_to_magphase)
+    if config.model_type == 'se' and config.v == 9:
+        # pipeline = pipeline.map(complex_to_magphase)
         pipeline = pipeline.map(speech_enhancement_preprocess)
         pipeline = pipeline.batch(config.batch_size, drop_remainder=False)
         pipeline = pipeline.map(label_downsample(32))
@@ -189,17 +188,6 @@ class CustomModel(tf.keras.Model):
         return {m.name: m.result() for m in self.metrics}
 
 
-def big_resconv(inp, kernel=128, chan=24):
-    out = tf.keras.layers.Conv2D(chan, kernel, strides=(2, 2), padding='same')(inp)
-    out = tf.keras.layers.BatchNormalization()(out)
-    out = tf.keras.layers.Activation('relu')(out)
-    out = tf.keras.layers.Dropout(0.1)(out)
-    
-    out2 = tf.keras.layers.Conv2D(out.shape[-1], 1, use_bias=False)(inp)
-    out2 = tf.keras.layers.AveragePooling2D(padding='same')(out2)
-    return out + out2
-        
-
 def ConvMPBlock(x, num_convs=2, fsize=32, kernel_size=3, pool_size=(2,2), strides=(2,2), BN=False, DO=False, MP=True):
     for i in range(num_convs):
        x = tf.keras.layers.Conv2D(fsize, kernel_size, padding='same')(x)
@@ -213,55 +201,58 @@ def ConvMPBlock(x, num_convs=2, fsize=32, kernel_size=3, pool_size=(2,2), stride
     return x
 
 
-def FullyConnectedLayer(x, nodes=512, act='relu', BN=False, DO=False):
+def FullyConnectedLayer(x, nodes=512, act='relu', BN=False, DO=False, name=None):
     x = tf.keras.layers.Dense(nodes)(x)
     if BN:
         x = tf.keras.layers.BatchNormalization()(x)
     if DO:
         x = tf.keras.layers.Dropout(DO)(x)
-    x = tf.keras.layers.Activation(act)(x)
+    x = tf.keras.layers.Activation(act, name=name)(x)
     return x
 
 
 def define_keras_model(config=None):
     fsize = 32
+    if config.model_type == 'vad' and config.v == 8:
+        fsize = 48
+
     td_dim = 1024
     input_tensor = tf.keras.layers.Input(
         shape=(config.n_mels, config.n_frame, config.n_chan))
     x = input_tensor
     x = ConvMPBlock(x, num_convs=2, fsize=fsize, BN=True)
     for i in range(1, 5):
+        if config.model_type == 'vad' and config.v == 6:
+            seconds = 0.5
+            kernel_size = int(round(seconds / (256 * config.n_frame / 16000 / x.shape[-2])))
+            x = tf.keras.layers.AveragePooling2D((1,kernel_size,), 1, padding='same')(x)
+            x = tf.keras.layers.MaxPooling2D((1,kernel_size * 2,), 1, padding='same')(x)
+        if config.model_type == 'vad' and config.v == 7:
+            skip = x
+            x = tf.keras.layers.Conv2D(skip.shape[-1] // 4, 1, 1, padding='same')(x)
+            x = tf.keras.layers.BatchNormalization()(x)
+            x = tf.keras.layers.Activation('relu')(x)
+            x = tf.keras.layers.Conv2D(skip.shape[-1] // 4, 3, 1, padding='same')(x)
+            x = tf.keras.layers.BatchNormalization()(x)
+            x = tf.keras.layers.Activation('relu')(x)
+            x = tf.keras.layers.Conv2D(skip.shape[-1], 1, 1, padding='same')(x)
+            x = tf.keras.layers.BatchNormalization()(x)
+            x = tf.keras.layers.Activation('relu')(x)
+            x += skip
         x = ConvMPBlock(x, num_convs=3, fsize=fsize * 2**i, BN=True)
 
     x = tf.keras.layers.Permute((2,1,3))(x)
     x = tf.keras.layers.Reshape((x.shape[1], x.shape[2]*x.shape[3]))(x)
     x = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(td_dim, activation='relu'))(x)
+    if config.model_type == 'vad' and config.v == 9:
+        x = FullyConnectedLayer(x, 512, BN=True)
     x = FullyConnectedLayer(x, 256, BN=True)
     x = FullyConnectedLayer(x, 128, BN=True)
+    if config.model_type == 'vad' and config.v == 9:
+        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128, return_sequences=True))(x)
     x = FullyConnectedLayer(x, 64, BN=True)
-    x = FullyConnectedLayer(x, 3, 'sigmoid' if config.model_type == 'vad' else 'relu')
-    if config.model_type == 'vad':
-        return CustomModel(inputs=input_tensor, outputs=x)
-
-    input_tensor_2 = tf.transpose(input_tensor, perm=[0, 2, 1, 3])
-    backbone = getattr(tf.keras.applications.efficientnet, f'EfficientNetB{config.model}')(
-        include_top=False, weights=None, input_tensor=input_tensor_2)
-    out = tf.transpose(backbone.output, perm=[0, 2, 1, 3])
-    out = tf.keras.layers.Reshape([-1, out.shape[-1]*out.shape[-2]])(out)
-
-    for i in range(config.n_layers):
-        out = tf.keras.layers.Dense(config.n_dim)(out)
-        out = tf.keras.layers.BatchNormalization()(out)
-        out = tf.keras.layers.Activation('sigmoid')(out) * out
-    out = tf.keras.layers.Dense(config.n_classes)(out)
-    # out= tf.keras.layers.Activation('relu')(out)
-    # out *= tf.cast(out < 1., out.dtype)
-    if config.model_type == 'ensemble':
-        x = (x + out) / 2
-        x = tf.keras.layers.Activation('sigmoid')(x)
-
-    model = tf.keras.models.Model(input_tensor, x)
-    return model
+    x = FullyConnectedLayer(x, 3, act='sigmoid' if config.model_type == 'vad' else 'relu', name='class' if config.model_type == 'se' else None)
+    return CustomModel(inputs=input_tensor, outputs=x)
 
 
 def convset(inp, chan=16):
@@ -282,48 +273,50 @@ def upsampling(inp, chan=64):
     return tf.keras.layers.Conv2DTranspose(chan, 2, 2, padding='same')(out)
 
 
+def speech_enhancement_model(input):
+    merge_input = tf.keras.layers.Input(tensor=input[1:])
+    inp1 = convset(merge_input, 64)
+    inp2 = convset(inp1, 128)
+    inp3 = convset(inp2, 256)
+    latent = convset(inp3, 512)
+    
+    speech3 = upsampling(latent, 256)
+    speech2 = upsampling(tf.keras.layers.Concatenate(-1)([inp3, speech3]), 128)
+    speech1 = upsampling(tf.keras.layers.Concatenate(-1)([inp2, speech2]), 64)
+    speech = upsampling(tf.keras.layers.Concatenate(-1)([inp1, speech1]), 2)
+
+    noise3 = upsampling(latent, 256)
+    noise2 = upsampling(tf.keras.layers.Concatenate(-1)([inp3, noise3]), 128)
+    noise1 = upsampling(tf.keras.layers.Concatenate(-1)([inp2, noise2]), 64)
+    noise = upsampling(tf.keras.layers.Concatenate(-1)([inp1, noise1]), 2)
+    return CustomModel(inputs=merge_input, outputs=[speech, noise])
+
+
 def get_model(config):
     input_tensor = tf.keras.layers.Input(
         shape=(config.n_mels, config.n_frame, config.n_chan))
 
-    if config.v == 8:
-        inp = input_tensor
-        out = big_resconv(inp)
-        out = big_resconv(out, chan=36)
-        out = big_resconv(out, chan=48)
-        out = big_resconv(out, chan=60)
-        out = big_resconv(out, chan=72)
-        out = tf.transpose(out, perm=[0, 2, 1, 3])
-        out = tf.keras.layers.Reshape([-1, out.shape[-1]*out.shape[-2]])(out)
-        out = tf.keras.layers.Dense(config.n_classes)(out)
-        out = tf.keras.layers.Activation('sigmoid')(out)
-        return CustomModel(inputs=input_tensor, outputs=out)
-    elif config.v == 9:
+    if config.model_type == 'se':
         input_tensor = tf.keras.layers.Input(shape=(256, config.n_frame, config.n_chan))
         merge_input = input_tensor[:, 1:]
         merge_input = tf.transpose(input_tensor, perm=[0, 2, 1, 3])
 
-        inp1 = convset(merge_input, 64)
-        inp2 = convset(inp1, 128)
-        inp3 = convset(inp2, 256)
-        latent = convset(inp3, 512)
+        se_model = speech_enhancement_model(merge_input)
+        if not config.pretrain:
+            se_model.trainable = False
+        speech, noise = se_model(merge_input)
         
-        speech3 = upsampling(latent, 256)
-        speech2 = upsampling(tf.keras.layers.Concatenate(-1)([inp3, speech3]), 128)
-        speech1 = upsampling(tf.keras.layers.Concatenate(-1)([inp2, speech2]), 64)
-        speech = upsampling(tf.keras.layers.Concatenate(-1)([inp1, speech1]), 1)
-
-        noise3 = upsampling(latent, 256)
-        noise2 = upsampling(tf.keras.layers.Concatenate(-1)([inp3, noise3]), 128)
-        noise1 = upsampling(tf.keras.layers.Concatenate(-1)([inp2, noise2]), 64)
-        noise = upsampling(tf.keras.layers.Concatenate(-1)([inp1, noise1]), 1)
-        
-        speech = tf.keras.layers.Concatenate(-1)([speech, noise])
-        out = tf.transpose(speech, perm=[0, 2, 1, 3])
+        # out = tf.keras.layers.Concatenate(-1)([speech, noise])
+        out = speech
+        out = tf.transpose(out, perm=[0, 2, 1, 3])
         config.n_mels = out.shape[1]
         tmp_config = deepcopy(config)
         tmp_config.n_chan = out.shape[-1]
-        out = define_keras_model(tmp_config)(out)
+        vadmodel = define_keras_model(tmp_config)
+        if config.pretrain:
+            vadmodel.trainable = False
+        out = vadmodel(out)
+
         # backbone = getattr(tf.keras.applications.efficientnet, f'EfficientNetB4')(
         # include_top=False, weights=None, input_tensor=out)
         # out = tf.keras.layers.Permute((2, 1, 3))(backbone.output)
@@ -337,18 +330,14 @@ def get_model(config):
         # out = tf.keras.layers.Conv1DTranspose(16, 2, 2)(out)
         # out = tf.keras.layers.Activation('relu')(out)
         # out = tf.keras.layers.Conv1DTranspose(8, 2, 2)(out)
-        out = tf.keras.layers.Activation('relu')(out)
-        out = tf.keras.layers.Dense(config.n_classes)(out)
-        out = tf.keras.layers.Activation('sigmoid', name='class')(out)
+        # out = tf.keras.layers.Activation('relu')(out)
+        # out = tf.keras.layers.Dense(config.n_classes)(out)
+        # out = tf.keras.layers.Activation('sigmoid', name='class')(out)
 
         speech = tf.keras.layers.Permute((2, 1, 3), name='speech')(speech)
         noise = tf.keras.layers.Permute((2, 1, 3), name='noise')(noise)
         return CustomModel(inputs=[input_tensor], outputs=[out, speech, noise])
-
-    if config.model_type == 'vad' or config.model_type == 'ensemble':
-        model = define_keras_model(config)
-        return model
-    else:
+    elif config.model_type == 'eff':
         backbone = getattr(tf.keras.applications.efficientnet, f'EfficientNetB{config.model}')(
             include_top=False, weights=None, input_tensor=input_tensor)
 
@@ -393,6 +382,9 @@ def get_model(config):
             out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
         elif config.v == 6:
             out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
+            out = FullyConnectedLayer(out, 256, BN=True)
+            out = FullyConnectedLayer(out, 128, BN=True)
+            out = FullyConnectedLayer(out, 64, BN=True)
         elif config.v == 7:
             out = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(128, return_sequences=True))(out)
             big = tf.keras.layers.Reshape((config.n_mels, -1))(input_tensor)
@@ -407,6 +399,8 @@ def get_model(config):
         # out *= tf.cast(out < 1., out.dtype)
         out = tf.keras.layers.Activation('sigmoid')(out)
         return tf.keras.models.Model(inputs=input_tensor, outputs=out)
+    elif config.model_type == 'vad':
+        return define_keras_model(config)
 
 
 def main():
@@ -420,9 +414,18 @@ def main():
     TOTAL_EPOCH = config.epochs
     BATCH_SIZE = config.batch_size
     NAME = (config.name + '_') if config.name != '' else ''
-    NAME = NAME + '_'.join([f'B{config.model}' if config.model_type == 'eff' else 'vad', f'v{config.v}', f'lr{config.lr}', 
+    if config.model_type == 'eff':
+        model_first_name = f'B{config.model}'
+    elif config.model_type == 'se':
+        model_first_name = 'se'
+    elif config.model_type == 'vad':
+        model_first_name = 'vad'
+        
+    NAME = NAME + '_'.join([model_first_name, f'v{config.v}', f'lr{config.lr}', 
                             f'batch{config.batch_size}', f'opt_{config.optimizer}', 
                             f'mel{config.n_mels}', f'chan{config.n_chan}', f'{config.loss.upper()}', f'framelen{config.n_frame}'])
+    if config.model_type == 'se' and config.v == 9 and config.pretrain:
+        NAME += '_weight'
     NAME = NAME if NAME.endswith('.h5') else NAME + '.h5'
     """ MODEL """
     model = get_model(config)
@@ -445,8 +448,8 @@ def main():
         loss = tf.keras.losses.BinaryCrossentropy()
     elif config.loss.upper() == 'FOCAL':
         loss = sigmoid_focal_crossentropy
-    if config.v == 9:
-        loss = [loss, tf.losses.MSE, tf.losses.MSE]
+    if config.model_type == 'se' and config.v == 9:
+        loss = [loss, tf.losses.MAE, tf.losses.MAE]
 
     metrics = [cos_sim,
                f1_score()]
@@ -461,32 +464,50 @@ def main():
     model.summary()
     print(NAME)
 
-    if config.pretrain:
+    if config.model_type == 'se' and config.v == 9 and not config.pretrain:
         model.load_weights(NAME)
         print('loaded pretrained model')
 
     """ DATA """
     train_set = make_dataset(config, training=True)
     test_set = make_dataset(config, training=False)
+    
+    earlystop_monitor = 'val_loss'
+    model_checkpoint_monitor = 'val_class_er' if config.v == 9 and config.model_type == 'eff' else 'val_er'
+    if config.model_type == 'se' and config.v == 9:
+        if config.pretrain:
+            earlystop_monitor = 'val_speech_loss'
+            model_checkpoint_monitor = 'val_speech_loss'
+        else:
+            earlystop_monitor = 'val_class_loss'
+            model_checkpoint_monitor = 'val_class_er'
+    else:
+        earlystop_monitor = 'val_loss'
+        model_checkpoint_monitor = 'val_er'
 
     """ TRAINING """
     callbacks = [
         CSVLogger(NAME.replace('.h5', '.csv'), append=True),
         SWA(start_epoch=TOTAL_EPOCH//4, swa_freq=2),
-        ModelCheckpoint(NAME, monitor='val_class_er' if config.v == 9 else 'val_er', save_best_only=True, verbose=1),
+        ModelCheckpoint(NAME, monitor=model_checkpoint_monitor, save_best_only=True, verbose=1),
         TerminateOnNaN(),
         TensorBoard(log_dir=os.path.join('tensorboard_log', NAME.split('.h5')[0])),
-        EarlyStopping(monitor='val_loss', patience=config.patience, restore_best_weights=True),
-        eval_callback(config, NAME)
+        EarlyStopping(monitor=earlystop_monitor, patience=config.patience, restore_best_weights=True),
+        eval_callback(config, NAME),
+        # LearningRateScheduler(tf.keras.optimizers.schedules.CosineDecayRestarts(config.lr, 5), verbose=1),
+        # LearningRateScheduler(lr_schedule, verbose=1),
+        # ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min')
     ]
+    callbacks.append(
+        LearningRateScheduler(
+            custom_scheduler(4096, TOTAL_EPOCH/12, config.lr_div)))
 
-    if not config.pretrain:
-        callbacks.append(
-            LearningRateScheduler(
-                custom_scheduler(4096, TOTAL_EPOCH/12, config.lr_div)))
-    else:
-        callbacks.append(
-            ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='max'))
+    # if not config.pretrain:
+    #     callbacks.append(
+    #         LearningRateScheduler(
+    #             custom_scheduler(4096, TOTAL_EPOCH/12, config.lr_div)))
+    # else:
+    #     callbacks.append(ReduceLROnPlateau(monitor='val_loss', factor=1 / 2**0.5, patience=5, verbose=1, mode='min'))
 
     try:
         model.fit(train_set,
@@ -501,6 +522,7 @@ def main():
     except NO_SWA_ERROR:
         pass
     print(NAME.split('.h5')[0])
+    exit()
 
 
 if __name__ == "__main__":

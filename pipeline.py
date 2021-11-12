@@ -31,9 +31,11 @@ def merge_complex_specs(background,
         background, 
         [1 if i != t_axis else (n_frame+bg_frame-1) // bg_frame 
          for i in range(n_dims)])
+    # background = tf.pad(background, [[4, 0], [0, 0], [0, 0]])
     complex_spec = tf.image.random_crop(background, output_shape)
+        
     only_voice = tf.zeros_like(complex_spec)
-    only_noise = tf.zeros_like(complex_spec)
+    only_noise = tf.identity(complex_spec)
 
     # voices
     max_voices = tf.shape(voices)[0]

@@ -14,7 +14,7 @@ def main(config):
     data_path = config.path
     paths = sorted(glob(os.path.join(data_path, '*.csv')))
     result_path = os.path.join(data_path, 'result.csv')
-    category = ['이름', '모델', 'version', 'batch', 'lr', 'optimizer', 'loss function', 'input', 'chan', 'output', 'epoch', 'cos_sim', 'er', 'f1_score', 'loss', 'val_cos_sim', 'val_er', 'val_f1_score', 'val_loss', 'test_er', 'swa_test_er']
+    category = ['이름', '모델', 'version', 'batch', 'lr', 'optimizer', 'loss function', 'input', 'chan', 'output', 'epoch', 'cos_sim', 'er', 'f1_score', 'loss', 'val_cos_sim', 'val_er', 'val_f1_score', 'val_loss', 'test_er', 'swa_test_er', 'sample_test_er']
 
     prev_lines = [category]
     
@@ -51,6 +51,8 @@ def main(config):
         framelen = name[9].split('framelen')[-1]
         if 'vad' in name:
             config.model_type = 'vad'
+        elif 'se' in name:
+            config.model_type = 'se'
         else:
             config.model_type = 'eff'
         evaluation = max([len(lines)-config.patience, 0]) > 5
@@ -66,7 +68,7 @@ def main(config):
         except ValueError:
             continue
         
-        if config.v == 9:
+        if config.model_type == 'se':
             output = str(tuple([i for i in model.output[0].shape[1:]]))
         else:
             output = str(tuple([i for i in model.output.shape[1:]]))
@@ -93,6 +95,17 @@ def main(config):
             data += [mean(score)]
         else:
             data += ['None']
+
+        if os.path.exists(f'{os.path.splitext(path)[0]}_sample.h5'):
+            if evaluation:
+                model.load_weights(f'{os.path.splitext(path)[0]}_sample.h5')
+                score = evaluate(config, model, overlap_hop=int(framelen) // 2, verbose=True)
+            else:
+                score = 1.0
+            data += [mean(score)]
+        else:
+            data += ['None']
+
         prev_lines.append(data)
 
     with open(result_path, 'w') as f:

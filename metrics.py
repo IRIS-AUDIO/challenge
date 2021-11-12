@@ -16,12 +16,16 @@ class eval_callback(tf.keras.callbacks.Callback):
         super(eval_callback, self).__init__()
         self.config = config
         self.name = NAME
+        self.score = np.inf
         
     def on_epoch_end(self, epoch, logs=None):
-        if epoch % 10 == 2:
+        if epoch % 5 == 2:
             model = tf.keras.models.clone_model(self.model)
             model.load_weights(self.name)
-            evaluate(self.config, model, verbose=True)
+            score = tf.reduce_mean(evaluate(self.config, model, verbose=True))
+            if score <= self.score:
+                self.score = score
+                tf.keras.models.save_model(model, os.path.splitext(self.name)[0] + '_sample.h5')
             
 
 def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
@@ -35,25 +39,29 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
 
     for path in sorted(glob('*.wav')):
         inputs = load_wav(path)
-        if config.n_chan == 3:
+        if config.n_chan == 1:
+            inputs = mono_chan(inputs)
+        elif config.n_chan == 3:
             inputs = stereo_mono(inputs)
         elif config.n_chan > 3:
             inputs = random_merge_aug(config.n_chan)(inputs, None)
-        if config.v != 9:
+
+        if config.model_type != 'se':
             inputs = stft_filter(int(round(256 * 1000 / 16000)))(inputs)
             inputs = complex_to_magphase(inputs)
             inputs = magphase_to_mel(config.n_mels)(inputs)
             inputs = minmax(inputs)
             inputs = log_on_mel(inputs)
         else:
-            inputs = complex_to_magphase(inputs)
+            # inputs = complex_to_magphase(inputs)
             inputs = speech_enhancement_preprocess(inputs)
-        frame_len = inputs.shape[-2]
 
+        frame_len = inputs.shape[-2]
         inputs = tf.signal.frame(inputs, config.n_frame, overlap_hop, pad_end=True, axis=-2)
         inputs = tf.transpose(inputs, (1, 0, 2, 3))
         preds = model.predict(inputs[..., :config.n_chan]) # [batch, time, class]
-        if config.v == 9:
+
+        if config.model_type == 'se' and config.v == 9:
             preds = preds[0]
         
         if config.v in label_downsample_model:
@@ -69,6 +77,7 @@ def evaluate(config, model, overlap_hop = 512, verbose: bool = False):
         # smoothing
         smoothing_kernel_size = int(0.5 * sr) // hop # 0.5초 길이의 kernel
         preds = tf.keras.layers.AveragePooling1D(smoothing_kernel_size, 1, padding='same')(preds[tf.newaxis, ...])[0]
+        preds = tf.keras.layers.MaxPooling1D(smoothing_kernel_size * 4, 1, padding='same')(preds[tf.newaxis, ...])[0]
         preds = tf.cast(preds >= 0.5, tf.float32)
         cls0, cls1, cls2 = metric.get_start_end_frame(preds)
         answer_gt_temp = tf.convert_to_tensor(answer_gt[os.path.basename(path)[:-4]])
